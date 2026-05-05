@@ -1,3 +1,29 @@
+import requests
+import time
+
+TOKEN = "8726365736:AAGDQJKNiz0sqpolwGKKXU-Qbox3W6C-xJ4"
+
+# 1. قتل أي ويبوك (webhook) بالقوة
+requests.get(f"https://api.telegram.org/bot{TOKEN}/deleteWebhook")
+
+# 2. إيقاف أي polling نشط (تحديثات) بالإكراه
+requests.get(f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset=-1")
+
+# 3. نطلب من التليجرام يوقف أي شيء متعلق بهذا التوكن
+requests.post(f"https://api.telegram.org/bot{TOKEN}/logout")
+
+# 4. نكرر حذف الويبوك للتأكيد
+requests.get(f"https://api.telegram.org/bot{TOKEN}/deleteWebhook")
+
+time.sleep(2)  # نعطي التليجرام فرصة
+
+# ===== بعد القطع الإجباري، نشغل البوت =====
+import telebot
+from telebot import types
+
+bot = telebot.TeleBot(TOKEN)
+
+# باااقي كود البوت هنا...
 import telebot
 from telebot import types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
