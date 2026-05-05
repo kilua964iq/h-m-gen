@@ -1,5 +1,6 @@
 import telebot
 from telebot import types
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import os
 import random
 import re
@@ -11,7 +12,7 @@ if not BOT_TOKEN:
 
 bot = telebot.TeleBot(BOT_TOKEN)
 BOT_USERNAME = "@o8380"
-VERSION = "7.2"
+VERSION = "1"
 
 TEMP_DIR = "temp_files"
 os.makedirs(TEMP_DIR, exist_ok=True)
@@ -58,39 +59,38 @@ def save_to_file(lines, filename):
         f.write('\n'.join(lines))
     return path
 
-# ==================== لوحة الأزرار الرئيسية ====================
-# icon_custom_emoji_id مطلوب دائماً مع style وإلا الأزرار تظهر رمادية
+# ==================== الأزرار — نفس أرقام mian.py بالضبط ====================
 
 def main_menu():
-    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup = InlineKeyboardMarkup(row_width=1)
 
-    # 🟢 أخضر — style=success
-    markup.add(types.InlineKeyboardButton(
-        text="𝐗𝟏 CVV + تاريخ عشوائي",
+    # أخضر success — نفس رقم mian.py سطر 190
+    markup.row(InlineKeyboardButton(
+        "𝐗𝟏 CVV + تاريخ عشوائي",
         callback_data="mode_1",
         style="success",
-        icon_custom_emoji_id="5992195984623408246"   # ✅ أخضر
+        icon_custom_emoji_id="5059910390280881178"
     ))
-    # 🔴 أحمر — style=danger
-    markup.add(types.InlineKeyboardButton(
-        text="𝐗𝟐 تاريخ ثابت / CVV عشوائي",
+    # أحمر danger — نفس رقم mian.py سطر 203
+    markup.row(InlineKeyboardButton(
+        "𝐗𝟐 تاريخ ثابت / CVV عشوائي",
         callback_data="mode_2",
         style="danger",
-        icon_custom_emoji_id="5974342591552952895"   # ❌ أحمر
+        icon_custom_emoji_id="5060247798616687432"
     ))
-    # 🔵 أزرق — style=primary
-    markup.add(types.InlineKeyboardButton(
-        text="𝐗𝟑 CVV ثابت / تاريخ عشوائي",
+    # أزرق primary — نفس رقم mian.py سطر 185
+    markup.row(InlineKeyboardButton(
+        "𝐗𝟑 CVV ثابت / تاريخ عشوائي",
         callback_data="mode_3",
         style="primary",
-        icon_custom_emoji_id="5992246772611681940"   # 🔵 أزرق
+        icon_custom_emoji_id="5059798514972754990"
     ))
-    # 🔴 أحمر — style=danger
-    markup.add(types.InlineKeyboardButton(
-        text="𝐂𝐚𝐧𝐜𝐞𝐥 إلغاء العملية",
+    # أحمر danger — نفس رقم mian.py سطر 220
+    markup.row(InlineKeyboardButton(
+        "𝐂𝐚𝐧𝐜𝐞𝐥 إلغاء العملية",
         callback_data="cancel",
         style="danger",
-        icon_custom_emoji_id="5060247798616687432"   # 🔴 أحمر
+        icon_custom_emoji_id="5060247798616687432"
     ))
     return markup
 
@@ -98,12 +98,12 @@ def main_menu():
 
 @bot.message_handler(commands=['start'])
 def start_command(message):
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton(
-        text="𝐔𝐩𝐥𝐨𝐚𝐝 أرسل ملف",
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton(
+        "𝐔𝐩𝐥𝐨𝐚𝐝 أرسل ملف",
         callback_data="upload_hint",
         style="success",
-        icon_custom_emoji_id="5992195984623408246"   # ✅ أخضر
+        icon_custom_emoji_id="5059910390280881178"
     ))
     bot.send_message(
         message.chat.id,
