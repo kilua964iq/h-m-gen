@@ -6,51 +6,50 @@ import requests
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# ==================== التوكن ====================
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN missing from environment variables")
 
 BOT_USERNAME = "@o8380"
-VERSION = "7.2"
-TEMP_DIR = "temp_files"
+VERSION      = "7.2"
+TEMP_DIR     = "temp_files"
 os.makedirs(TEMP_DIR, exist_ok=True)
 user_data = {}
 
-# ==================== حل 409 نهائياً ====================
+# ==================== حل 409 بدون logOut ====================
 
 def force_kill_sessions(token):
     base = f"https://api.telegram.org/bot{token}"
 
-    print("Step 1: deleteWebhook + drop pending updates...")
+    print("Step 1: deleteWebhook + drop_pending_updates...")
     try:
         r = requests.get(f"{base}/deleteWebhook?drop_pending_updates=true", timeout=10)
         print(f"   -> {r.json()}")
     except Exception as e:
-        print(f"   -> deleteWebhook error: {e}")
+        print(f"   -> error: {e}")
 
     print("Step 2: getUpdates offset=-1 (flush queue)...")
     try:
         r = requests.get(f"{base}/getUpdates?offset=-1&timeout=0", timeout=10)
         print(f"   -> status {r.status_code}")
     except Exception as e:
-        print(f"   -> getUpdates error: {e}")
+        print(f"   -> error: {e}")
 
-    print("Step 3: logOut (kills ALL other sessions)...")
+    # close يوقف الجلسة الحالية فقط بدون طرد التوكن
+    print("Step 3: close (stop current session only)...")
     try:
-        r = requests.post(f"{base}/logOut", timeout=10)
+        r = requests.post(f"{base}/close", timeout=10)
         print(f"   -> {r.json()}")
     except Exception as e:
-        print(f"   -> logOut error: {e}")
+        print(f"   -> error: {e}")
 
-    print("Waiting 5 seconds for Telegram to release all locks...")
+    print("Waiting 5 seconds...")
     time.sleep(5)
-    print("Done. Starting bot polling...\n")
+    print("Done. Starting polling...\n")
 
 
 force_kill_sessions(BOT_TOKEN)
 
-# ==================== البوت ====================
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 
 # ==================== دوال مساعدة ====================
@@ -73,17 +72,14 @@ def random_number(length):
     return ''.join([str(random.randint(0, 9)) for _ in range(length)])
 
 def random_date():
-    year  = random.randint(26, 32)
-    month = random.randint(1, 12)
-    return f"{month:02d}|{year:02d}"
+    return f"{random.randint(1,12):02d}|{random.randint(26,32):02d}"
 
 def generate_entries(base12, count=10, fixed_date=None, fixed_cvv=None):
     result = []
     for _ in range(count):
-        suffix = random_number(4)
-        full   = base12 + suffix
-        date   = fixed_date if fixed_date else random_date()
-        cvv    = fixed_cvv  if fixed_cvv  else random_number(3)
+        full = base12 + random_number(4)
+        date = fixed_date if fixed_date else random_date()
+        cvv  = fixed_cvv  if fixed_cvv  else random_number(3)
         result.append(f"{full}|{date}|{cvv}")
     return result
 
@@ -94,7 +90,6 @@ def save_to_file(lines, filename):
     return path
 
 # ==================== الأزرار ====================
-# الأرقام مأخوذة مباشرة من mian.py الذي يعمل بألوان صحيحة
 
 def main_menu():
     markup = InlineKeyboardMarkup(row_width=1)
@@ -102,25 +97,25 @@ def main_menu():
         "𝐗𝟏 CVV + تاريخ عشوائي",
         callback_data="mode_1",
         style="success",
-        icon_custom_emoji_id="5059910390280881178"   # اخضر
+        icon_custom_emoji_id="5059910390280881178"
     ))
     markup.row(InlineKeyboardButton(
         "𝐗𝟐 تاريخ ثابت / CVV عشوائي",
         callback_data="mode_2",
         style="danger",
-        icon_custom_emoji_id="5060247798616687432"   # احمر
+        icon_custom_emoji_id="5060247798616687432"
     ))
     markup.row(InlineKeyboardButton(
         "𝐗𝟑 CVV ثابت / تاريخ عشوائي",
         callback_data="mode_3",
         style="primary",
-        icon_custom_emoji_id="5059798514972754990"   # ازرق
+        icon_custom_emoji_id="5059798514972754990"
     ))
     markup.row(InlineKeyboardButton(
         "𝐂𝐚𝐧𝐜𝐞𝐥 إلغاء العملية",
         callback_data="cancel",
         style="danger",
-        icon_custom_emoji_id="5060247798616687432"   # احمر
+        icon_custom_emoji_id="5060247798616687432"
     ))
     return markup
 
@@ -130,7 +125,7 @@ def start_btn():
         "𝐔𝐩𝐥𝐨𝐚𝐝 أرسل ملف",
         callback_data="upload_hint",
         style="success",
-        icon_custom_emoji_id="5059910390280881178"   # اخضر
+        icon_custom_emoji_id="5059910390280881178"
     ))
     return markup
 
@@ -162,9 +157,9 @@ def handle_document(message):
         bot.reply_to(message, "❌ يرجى إرسال ملف .txt فقط")
         return
 
-    file_info   = bot.get_file(message.document.file_id)
-    downloaded  = bot.download_file(file_info.file_path)
-    input_path  = os.path.join(TEMP_DIR, f"{user_id}_input.txt")
+    file_info  = bot.get_file(message.document.file_id)
+    downloaded = bot.download_file(file_info.file_path)
+    input_path = os.path.join(TEMP_DIR, f"{user_id}_input.txt")
 
     with open(input_path, 'wb') as f:
         f.write(downloaded)
@@ -257,7 +252,7 @@ def process_mode(call):
         pass
     del user_data[user_id]
 
-# ==================== تشغيل مع حماية تلقائية من 409 ====================
+# ==================== تشغيل ====================
 
 if __name__ == "__main__":
     print(f"Bot V{VERSION} running...")
@@ -272,7 +267,7 @@ if __name__ == "__main__":
         except Exception as e:
             err = str(e)
             if "409" in err or "Conflict" in err:
-                print("409 Conflict — re-killing sessions...")
+                print("409 detected — re-running kill sequence...")
                 force_kill_sessions(BOT_TOKEN)
             else:
                 print(f"Error: {err}")
