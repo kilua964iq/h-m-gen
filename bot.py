@@ -12,7 +12,7 @@ import re
 import hmac
 import hashlib
 import requests
-
+import os
 # ==================== التوكن والإعدادات ====================
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
