@@ -1,49 +1,57 @@
-import requests
-import time
-
-TOKEN = "8726365736:AAGDQJKNiz0sqpolwGKKXU-Qbox3W6C-xJ4"
-
-# 1. قتل أي ويبوك (webhook) بالقوة
-requests.get(f"https://api.telegram.org/bot{TOKEN}/deleteWebhook")
-
-# 2. إيقاف أي polling نشط (تحديثات) بالإكراه
-requests.get(f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset=-1")
-
-# 3. نطلب من التليجرام يوقف أي شيء متعلق بهذا التوكن
-requests.post(f"https://api.telegram.org/bot{TOKEN}/logout")
-
-# 4. نكرر حذف الويبوك للتأكيد
-requests.get(f"https://api.telegram.org/bot{TOKEN}/deleteWebhook")
-
-time.sleep(2)  # نعطي التليجرام فرصة
-
-# ===== بعد القطع الإجباري، نشغل البوت =====
-import telebot
-from telebot import types
-
-bot = telebot.TeleBot(TOKEN)
-
-# باااقي كود البوت هنا...
-import telebot
-from telebot import types
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import os
-import random
 import re
 import time
+import random
+import requests
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+# ==================== التوكن ====================
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN is missing from environment variables")
+    raise ValueError("BOT_TOKEN missing from environment variables")
 
-bot = telebot.TeleBot(BOT_TOKEN)
 BOT_USERNAME = "@o8380"
-VERSION = "1"
-
+VERSION = "7.2"
 TEMP_DIR = "temp_files"
 os.makedirs(TEMP_DIR, exist_ok=True)
-
 user_data = {}
+
+# ==================== حل 409 نهائياً ====================
+
+def force_kill_sessions(token):
+    base = f"https://api.telegram.org/bot{token}"
+
+    print("Step 1: deleteWebhook + drop pending updates...")
+    try:
+        r = requests.get(f"{base}/deleteWebhook?drop_pending_updates=true", timeout=10)
+        print(f"   -> {r.json()}")
+    except Exception as e:
+        print(f"   -> deleteWebhook error: {e}")
+
+    print("Step 2: getUpdates offset=-1 (flush queue)...")
+    try:
+        r = requests.get(f"{base}/getUpdates?offset=-1&timeout=0", timeout=10)
+        print(f"   -> status {r.status_code}")
+    except Exception as e:
+        print(f"   -> getUpdates error: {e}")
+
+    print("Step 3: logOut (kills ALL other sessions)...")
+    try:
+        r = requests.post(f"{base}/logOut", timeout=10)
+        print(f"   -> {r.json()}")
+    except Exception as e:
+        print(f"   -> logOut error: {e}")
+
+    print("Waiting 5 seconds for Telegram to release all locks...")
+    time.sleep(5)
+    print("Done. Starting bot polling...\n")
+
+
+force_kill_sessions(BOT_TOKEN)
+
+# ==================== البوت ====================
+bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 
 # ==================== دوال مساعدة ====================
 
@@ -65,7 +73,7 @@ def random_number(length):
     return ''.join([str(random.randint(0, 9)) for _ in range(length)])
 
 def random_date():
-    year = random.randint(26, 32)
+    year  = random.randint(26, 32)
     month = random.randint(1, 12)
     return f"{month:02d}|{year:02d}"
 
@@ -73,9 +81,9 @@ def generate_entries(base12, count=10, fixed_date=None, fixed_cvv=None):
     result = []
     for _ in range(count):
         suffix = random_number(4)
-        full = base12 + suffix
-        date = fixed_date if fixed_date else random_date()
-        cvv = fixed_cvv if fixed_cvv else random_number(3)
+        full   = base12 + suffix
+        date   = fixed_date if fixed_date else random_date()
+        cvv    = fixed_cvv  if fixed_cvv  else random_number(3)
         result.append(f"{full}|{date}|{cvv}")
     return result
 
@@ -85,52 +93,51 @@ def save_to_file(lines, filename):
         f.write('\n'.join(lines))
     return path
 
-# ==================== الأزرار — نفس أرقام mian.py بالضبط ====================
+# ==================== الأزرار ====================
+# الأرقام مأخوذة مباشرة من mian.py الذي يعمل بألوان صحيحة
 
 def main_menu():
     markup = InlineKeyboardMarkup(row_width=1)
-
-    # أخضر success — نفس رقم mian.py سطر 190
     markup.row(InlineKeyboardButton(
         "𝐗𝟏 CVV + تاريخ عشوائي",
         callback_data="mode_1",
         style="success",
-        icon_custom_emoji_id="5059910390280881178"
+        icon_custom_emoji_id="5059910390280881178"   # اخضر
     ))
-    # أحمر danger — نفس رقم mian.py سطر 203
     markup.row(InlineKeyboardButton(
         "𝐗𝟐 تاريخ ثابت / CVV عشوائي",
         callback_data="mode_2",
         style="danger",
-        icon_custom_emoji_id="5060247798616687432"
+        icon_custom_emoji_id="5060247798616687432"   # احمر
     ))
-    # أزرق primary — نفس رقم mian.py سطر 185
     markup.row(InlineKeyboardButton(
         "𝐗𝟑 CVV ثابت / تاريخ عشوائي",
         callback_data="mode_3",
         style="primary",
-        icon_custom_emoji_id="5059798514972754990"
+        icon_custom_emoji_id="5059798514972754990"   # ازرق
     ))
-    # أحمر danger — نفس رقم mian.py سطر 220
     markup.row(InlineKeyboardButton(
         "𝐂𝐚𝐧𝐜𝐞𝐥 إلغاء العملية",
         callback_data="cancel",
         style="danger",
-        icon_custom_emoji_id="5060247798616687432"
+        icon_custom_emoji_id="5060247798616687432"   # احمر
     ))
     return markup
 
-# ==================== /start ====================
-
-@bot.message_handler(commands=['start'])
-def start_command(message):
+def start_btn():
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton(
         "𝐔𝐩𝐥𝐨𝐚𝐝 أرسل ملف",
         callback_data="upload_hint",
         style="success",
-        icon_custom_emoji_id="5059910390280881178"
+        icon_custom_emoji_id="5059910390280881178"   # اخضر
     ))
+    return markup
+
+# ==================== Handlers ====================
+
+@bot.message_handler(commands=['start'])
+def start_command(message):
     bot.send_message(
         message.chat.id,
         f"✨ أهلاً بك في بوت توليد الأرقام ✨\n\n"
@@ -139,15 +146,13 @@ def start_command(message):
         f"• يتم توليد 10 مجموعات من كل رقم\n\n"
         f"🔹 المطور: {BOT_USERNAME}\n"
         f"🔹 الإصدار: {VERSION}",
-        reply_markup=markup
+        reply_markup=start_btn()
     )
 
 @bot.callback_query_handler(func=lambda call: call.data == "upload_hint")
 def upload_hint(call):
     bot.answer_callback_query(call.id)
     bot.send_message(call.message.chat.id, "📤 أرسل ملف .txt الآن")
-
-# ==================== استقبال الملف ====================
 
 @bot.message_handler(content_types=['document'])
 def handle_document(message):
@@ -157,10 +162,10 @@ def handle_document(message):
         bot.reply_to(message, "❌ يرجى إرسال ملف .txt فقط")
         return
 
-    file_info = bot.get_file(message.document.file_id)
-    downloaded = bot.download_file(file_info.file_path)
+    file_info   = bot.get_file(message.document.file_id)
+    downloaded  = bot.download_file(file_info.file_path)
+    input_path  = os.path.join(TEMP_DIR, f"{user_id}_input.txt")
 
-    input_path = os.path.join(TEMP_DIR, f"{user_id}_input.txt")
     with open(input_path, 'wb') as f:
         f.write(downloaded)
 
@@ -181,12 +186,10 @@ def handle_document(message):
         reply_markup=main_menu()
     )
 
-# ==================== معالجة الأزرار ====================
-
 @bot.callback_query_handler(func=lambda call: call.data in ["mode_1", "mode_2", "mode_3", "cancel"])
 def process_mode(call):
     user_id = call.from_user.id
-    data = user_data.get(user_id)
+    data    = user_data.get(user_id)
 
     if not data:
         bot.answer_callback_query(call.id, "❌ الجلسة منتهية! أرسل الملف مرة أخرى.", show_alert=True)
@@ -211,8 +214,8 @@ def process_mode(call):
     except:
         pass
 
-    numbers = data["numbers"]
-    generated = []
+    numbers    = data["numbers"]
+    generated  = []
     mode_label = ""
 
     if call.data == "mode_1":
@@ -254,13 +257,23 @@ def process_mode(call):
         pass
     del user_data[user_id]
 
-# ==================== تشغيل البوت ====================
+# ==================== تشغيل مع حماية تلقائية من 409 ====================
 
 if __name__ == "__main__":
     print(f"Bot V{VERSION} running...")
     while True:
         try:
-            bot.polling(none_stop=True, interval=1, timeout=30)
+            bot.polling(
+                none_stop=True,
+                interval=1,
+                timeout=30,
+                allowed_updates=["message", "callback_query"]
+            )
         except Exception as e:
-            print(f"Error: {e}")
-            time.sleep(5)
+            err = str(e)
+            if "409" in err or "Conflict" in err:
+                print("409 Conflict — re-killing sessions...")
+                force_kill_sessions(BOT_TOKEN)
+            else:
+                print(f"Error: {err}")
+                time.sleep(5)
