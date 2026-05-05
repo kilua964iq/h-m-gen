@@ -1,228 +1,237 @@
 import telebot
 from telebot import types
-from telebot.types import LabeledPrice, InlineKeyboardMarkup, InlineKeyboardButton
-import time
-import json
-import logging
-import threading
-from datetime import datetime, timedelta
-import random
-import string
-import re
-import hmac
-import hashlib
-import requests
 import os
-# ==================== التوكن والإعدادات ====================
+import random
+import re
+import time
+
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise ValueError("❌ BOT_TOKEN is missing from environment variables")
+    raise ValueError("BOT_TOKEN is missing from environment variables")
 
 bot = telebot.TeleBot(BOT_TOKEN)
-OWNER_ID = 1013384909
-BOT_NAME = "Mustafa Checker Bot"
 BOT_USERNAME = "@o8380"
 VERSION = "7.2"
 
-bot = telebot.TeleBot(BOT_TOKEN)
-
-# مجلد للرفع
 TEMP_DIR = "temp_files"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-user_data = {}  # {user_id: {"cards": [], "file_path": ""}}
+user_data = {}
 
 # ==================== دوال مساعدة ====================
-def read_cards_from_file(file_path):
-    """قراءة البطاقات من الملف وأخذ أول 12 رقم فقط"""
-    cards = []
+
+def read_numbers_from_file(file_path):
+    numbers = []
     try:
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             for line in f:
                 line = line.strip()
                 if line:
-                    # استخراج أول 12 رقم من أي صيغة
-                    numbers = re.findall(r'\d+', line)
-                    if numbers:
-                        card_num = numbers[0].replace(' ', '').replace('-', '')
-                        if len(card_num) >= 12:
-                            cards.append(card_num[:12])
+                    digits = re.sub(r'\D', '', line)
+                    if len(digits) >= 12:
+                        numbers.append(digits[:12])
     except Exception as e:
-        print(f"Error reading: {e}")
-    return cards
+        print(f"Error reading file: {e}")
+    return numbers
 
-def generate_random_number(length):
+def random_number(length):
     return ''.join([str(random.randint(0, 9)) for _ in range(length)])
 
-def generate_random_date():
-    """تاريخ عشوائي بين 2026-2032"""
-    year = random.randint(2026, 2032)
+def random_date():
+    year = random.randint(26, 32)
     month = random.randint(1, 12)
-    return f"{month:02d}|{str(year)[-2:]}"
+    return f"{month:02d}|{year:02d}"
 
-def generate_cards(bin_12, count=10, fixed_date=None, fixed_cvv=None):
-    """توليد بطاقات جديدة من أول 12 رقم"""
-    cards = []
+def generate_entries(base12, count=10, fixed_date=None, fixed_cvv=None):
+    result = []
     for _ in range(count):
-        remaining = generate_random_number(4)
-        full_card = bin_12 + remaining
-        date = fixed_date if fixed_date else generate_random_date()
-        cvv = fixed_cvv if fixed_cvv else generate_random_number(3)
-        cards.append(f"{full_card}|{date}|{cvv}")
-    return cards
+        suffix = random_number(4)
+        full = base12 + suffix
+        date = fixed_date if fixed_date else random_date()
+        cvv = fixed_cvv if fixed_cvv else random_number(3)
+        result.append(f"{full}|{date}|{cvv}")
+    return result
 
-def save_cards_to_file(cards, filename):
-    filepath = os.path.join(TEMP_DIR, filename)
-    with open(filepath, 'w', encoding='utf-8') as f:
-        f.write('\n'.join(cards))
-    return filepath
+def save_to_file(lines, filename):
+    path = os.path.join(TEMP_DIR, filename)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(lines))
+    return path
 
-# ==================== واجهة الأزرار الرئيسية ====================
-def create_main_menu():
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    
-    markup.row(
-        types.InlineKeyboardButton("🟢 CVV+تاريخ عشوائي", callback_data="mode_1", style="success", icon_custom_emoji_id="5992195984623408246"),
-        types.InlineKeyboardButton("🔵 تاريخ ثابت / CVV عشوائي", callback_data="mode_2", style="primary", icon_custom_emoji_id="5992246772611681940")
-    )
-    markup.row(
-        types.InlineKeyboardButton("🔴 CVV ثابت / تاريخ عشوائي", callback_data="mode_3", style="danger", icon_custom_emoji_id="5060247798616687432"),
-        types.InlineKeyboardButton("🟢 إلغاء العملية", callback_data="cancel", style="success", icon_custom_emoji_id="5060115075537306714")
-    )
-    
+# ==================== لوحة الأزرار الرئيسية ====================
+# icon_custom_emoji_id مطلوب دائماً مع style وإلا الأزرار تظهر رمادية
+
+def main_menu():
+    markup = types.InlineKeyboardMarkup(row_width=1)
+
+    # 🟢 أخضر — style=success
+    markup.add(types.InlineKeyboardButton(
+        text="𝐗𝟏 CVV + تاريخ عشوائي",
+        callback_data="mode_1",
+        style="success",
+        icon_custom_emoji_id="5992195984623408246"   # ✅ أخضر
+    ))
+    # 🔴 أحمر — style=danger
+    markup.add(types.InlineKeyboardButton(
+        text="𝐗𝟐 تاريخ ثابت / CVV عشوائي",
+        callback_data="mode_2",
+        style="danger",
+        icon_custom_emoji_id="5974342591552952895"   # ❌ أحمر
+    ))
+    # 🔵 أزرق — style=primary
+    markup.add(types.InlineKeyboardButton(
+        text="𝐗𝟑 CVV ثابت / تاريخ عشوائي",
+        callback_data="mode_3",
+        style="primary",
+        icon_custom_emoji_id="5992246772611681940"   # 🔵 أزرق
+    ))
+    # 🔴 أحمر — style=danger
+    markup.add(types.InlineKeyboardButton(
+        text="𝐂𝐚𝐧𝐜𝐞𝐥 إلغاء العملية",
+        callback_data="cancel",
+        style="danger",
+        icon_custom_emoji_id="5060247798616687432"   # 🔴 أحمر
+    ))
     return markup
 
-# ==================== أمر /start ====================
+# ==================== /start ====================
+
 @bot.message_handler(commands=['start'])
 def start_command(message):
-    user_name = message.from_user.first_name
     markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("📤 إرسال ملف", callback_data="upload_file", style="primary"))
-    
+    markup.add(types.InlineKeyboardButton(
+        text="𝐔𝐩𝐥𝐨𝐚𝐝 أرسل ملف",
+        callback_data="upload_hint",
+        style="success",
+        icon_custom_emoji_id="5992195984623408246"   # ✅ أخضر
+    ))
     bot.send_message(
         message.chat.id,
-        f"✨ **أهلاً بك {user_name} في {BOT_NAME}** ✨\n\n"
-        f"📌 **الأداة الاحترافية لتوليد البطاقات**\n"
-        f"• يتم أخذ أول 12 رقم من كل بطاقة في ملفك\n"
-        f"• توليد 10 بطاقات جديدة من كل رقم\n"
-        f"• خيارات متعددة: CVV وتاريخ عشوائي أو ثابت\n\n"
-        f"🔹 **المطور:** {BOT_USERNAME}\n"
-        f"🔹 **الإصدار:** {VERSION}\n\n"
-        f"👇 **أرسل ملف `.txt` أو اضغط الزر بالأسفل**",
-        parse_mode="Markdown",
+        f"✨ أهلاً بك في بوت توليد الأرقام ✨\n\n"
+        f"📌 أرسل ملف .txt يحتوي على أرقام\n"
+        f"• يؤخذ أول 12 رقم من كل سطر\n"
+        f"• يتم توليد 10 مجموعات من كل رقم\n\n"
+        f"🔹 المطور: {BOT_USERNAME}\n"
+        f"🔹 الإصدار: {VERSION}",
         reply_markup=markup
     )
 
-@bot.callback_query_handler(func=lambda call: call.data == "upload_file")
-def request_file(call):
+@bot.callback_query_handler(func=lambda call: call.data == "upload_hint")
+def upload_hint(call):
     bot.answer_callback_query(call.id)
-    bot.send_message(call.message.chat.id, "📤 أرسل لي ملف `.txt` يحتوي على البطاقات")
+    bot.send_message(call.message.chat.id, "📤 أرسل ملف .txt الآن")
 
-# ==================== استقبال الملفات ====================
+# ==================== استقبال الملف ====================
+
 @bot.message_handler(content_types=['document'])
 def handle_document(message):
     user_id = message.from_user.id
-    
+
     if not message.document.file_name.endswith('.txt'):
-        bot.reply_to(message, "❌ يرجى إرسال ملف `.txt` فقط")
+        bot.reply_to(message, "❌ يرجى إرسال ملف .txt فقط")
         return
-    
-    # تحميل الملف
+
     file_info = bot.get_file(message.document.file_id)
-    downloaded_file = bot.download_file(file_info.file_path)
-    
-    file_path = os.path.join(TEMP_DIR, f"{user_id}_input.txt")
-    with open(file_path, 'wb') as f:
-        f.write(downloaded_file)
-    
-    # قراءة البطاقات
-    cards = read_cards_from_file(file_path)
-    
-    if not cards:
-        bot.reply_to(message, "❌ الملف لا يحتوي على بطاقات صالحة (الصيغة المطلوبة: أرقام فقط، 12 رقم على الأقل)")
-        os.remove(file_path)
+    downloaded = bot.download_file(file_info.file_path)
+
+    input_path = os.path.join(TEMP_DIR, f"{user_id}_input.txt")
+    with open(input_path, 'wb') as f:
+        f.write(downloaded)
+
+    numbers = read_numbers_from_file(input_path)
+
+    if not numbers:
+        bot.reply_to(message, "❌ الملف لا يحتوي على أرقام صالحة (12 رقم على الأقل في كل سطر)")
+        os.remove(input_path)
         return
-    
-    user_data[user_id] = {
-        "cards": cards,
-        "file_path": file_path
-    }
-    
+
+    user_data[user_id] = {"numbers": numbers, "file_path": input_path}
+
     bot.send_message(
         message.chat.id,
-        f"📊 **تم رفع الملف بنجاح**\n"
-        f"• عدد البطاقات الأصلية: `{len(cards)}`\n\n"
-        f"🎯 **اختر طريقة المعالجة:**",
-        parse_mode="Markdown",
-        reply_markup=create_main_menu()
+        f"📊 تم رفع الملف بنجاح\n"
+        f"• عدد الأسطر الصالحة: {len(numbers)}\n\n"
+        f"🎯 اختر طريقة التوليد:",
+        reply_markup=main_menu()
     )
 
 # ==================== معالجة الأزرار ====================
+
 @bot.callback_query_handler(func=lambda call: call.data in ["mode_1", "mode_2", "mode_3", "cancel"])
 def process_mode(call):
     user_id = call.from_user.id
     data = user_data.get(user_id)
-    
+
     if not data:
-        bot.answer_callback_query(call.id, "❌ جلسة منتهية! أرسل الملف مرة أخرى.", show_alert=True)
-        bot.send_message(call.message.chat.id, "📤 أرسل ملف `.txt` جديد")
+        bot.answer_callback_query(call.id, "❌ الجلسة منتهية! أرسل الملف مرة أخرى.", show_alert=True)
         return
-    
+
     if call.data == "cancel":
-        bot.answer_callback_query(call.id, "✅ تم الإلغاء")
-        bot.edit_message_text("✅ تم إلغاء العملية", call.message.chat.id, call.message.message_id)
+        bot.answer_callback_query(call.id, "تم الإلغاء")
+        try:
+            bot.edit_message_text("❌ تم إلغاء العملية", call.message.chat.id, call.message.message_id)
+        except:
+            pass
+        try:
+            os.remove(data["file_path"])
+        except:
+            pass
+        del user_data[user_id]
         return
-    
+
     bot.answer_callback_query(call.id, "🔄 جاري المعالجة...")
-    bot.edit_message_text("🔄 جاري توليد البطاقات...", call.message.chat.id, call.message.message_id)
-    
-    cards_bin = data["cards"]
-    generated_cards = []
-    mode_name = ""
-    
+    try:
+        bot.edit_message_text("🔄 جاري توليد البيانات...", call.message.chat.id, call.message.message_id)
+    except:
+        pass
+
+    numbers = data["numbers"]
+    generated = []
+    mode_label = ""
+
     if call.data == "mode_1":
-        mode_name = "CVV+تاريخ عشوائي 🟢"
-        for bin12 in cards_bin:
-            generated_cards.extend(generate_cards(bin12, count=10))
+        mode_label = "CVV + تاريخ عشوائي"
+        for n in numbers:
+            generated.extend(generate_entries(n, count=10))
+
     elif call.data == "mode_2":
-        mode_name = "تاريخ ثابت / CVV عشوائي 🔵"
-        for bin12 in cards_bin:
-            generated_cards.extend(generate_cards(bin12, count=10, fixed_date="01|26"))
+        mode_label = "تاريخ ثابت (01/26) + CVV عشوائي"
+        for n in numbers:
+            generated.extend(generate_entries(n, count=10, fixed_date="01|26"))
+
     elif call.data == "mode_3":
-        mode_name = "CVV ثابت / تاريخ عشوائي 🔴"
-        for bin12 in cards_bin:
-            generated_cards.extend(generate_cards(bin12, count=10, fixed_cvv="123"))
-    
-    # حفظ وإرسال الملف
-    output_file = save_cards_to_file(generated_cards, f"{user_id}_output_{call.data}.txt")
-    
-    with open(output_file, 'rb') as f:
+        mode_label = "CVV ثابت (123) + تاريخ عشوائي"
+        for n in numbers:
+            generated.extend(generate_entries(n, count=10, fixed_cvv="123"))
+
+    output_path = save_to_file(generated, f"{user_id}_output.txt")
+
+    with open(output_path, 'rb') as f:
         bot.send_document(
             call.message.chat.id,
             f,
             caption=(
-                f"✅ **تم التوليد بنجاح**\n"
+                f"✅ تم التوليد بنجاح\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"📁 البطاقات الأصلية: `{len(cards_bin)}`\n"
-                f"🆕 البطاقات المُولدة: `{len(generated_cards)}`\n"
-                f"⚙️ **الوضع:** {mode_name}\n"
+                f"📁 الأسطر الأصلية : {len(numbers)}\n"
+                f"🆕 المولد           : {len(generated)}\n"
+                f"⚙️ الوضع           : {mode_label}\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"🔹 **المطور:** {BOT_USERNAME}\n"
-                f"🔹 **الإصدار:** {VERSION}"
-            ),
-            parse_mode="Markdown"
+                f"🔹 {BOT_USERNAME} | V{VERSION}"
+            )
         )
-    
-    # تنظيف
-    os.remove(output_file)
-    os.remove(data["file_path"])
+
+    try:
+        os.remove(output_path)
+        os.remove(data["file_path"])
+    except:
+        pass
     del user_data[user_id]
 
 # ==================== تشغيل البوت ====================
+
 if __name__ == "__main__":
-    print(f"🚀 {BOT_NAME} V{VERSION} is running...")
-    print(f"👤 Developer: {BOT_USERNAME}")
-    
+    print(f"Bot V{VERSION} running...")
     while True:
         try:
             bot.polling(none_stop=True, interval=1, timeout=30)
