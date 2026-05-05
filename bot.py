@@ -1,11 +1,11 @@
 import random
 import os
-from datetime import datetime, timedelta
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
 # ========== إعدادات البوت ==========
-TOKEN = "8726365736:AAGDQJKNiz0sqpolwGKKXU-Qbox3W6C-xJ4"  # ضع توكن البوت هنا
+TOKEN = os.getenv("BOT_TOKEN")
 
 # مجلد مؤقت للملفات
 TEMP_DIR = "temp_files"
@@ -49,8 +49,8 @@ def process_cards_mode1(original_cards):
         parts = card_line.split('|')
         first_12 = parts[0][:12]
         
-        for _ in range(10):  # توليد 10 بطاقات من كل أصلية
-            remaining_digits = generate_random_numbers(4)  # 4 أرقام عشوائية
+        for _ in range(10):
+            remaining_digits = generate_random_numbers(4)
             full_card = first_12 + remaining_digits
             cvv = generate_random_numbers(3)
             new_cards.append(f"{full_card}|{cvv}")
@@ -131,25 +131,19 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [
             InlineKeyboardButton(
                 "🔹 أول 12 رقم + أرقام عشوائية + CVV عشوائي",
-                callback_data="mode_1",
-                style="success",
-                icon_custom_emoji_id="5992195984623408246"
+                callback_data="mode_1"
             )
         ],
         [
             InlineKeyboardButton(
                 "🔸 أول 12 رقم + أرقام عشوائية + CVV ثابت",
-                callback_data="mode_2",
-                style="primary",
-                icon_custom_emoji_id="5992246772611681940"
+                callback_data="mode_2"
             )
         ],
         [
             InlineKeyboardButton(
                 "🔻 أول 12 رقم + تاريخ عشوائي + CVV ثابت",
-                callback_data="mode_3",
-                style="danger",
-                icon_custom_emoji_id="5060247798616687432"
+                callback_data="mode_3"
             )
         ],
         [
@@ -221,17 +215,30 @@ async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ أمر غير معروف! أرسل ملف نصي فقط.")
 
 # ========== تشغيل البوت ==========
-def main():
+async def main():
+    """الدالة الرئيسية لتشغيل البوت"""
+    if not TOKEN:
+        print("❌ خطأ: لم يتم تعيين BOT_TOKEN في متغيرات البيئة")
+        return
+    
     app = Application.builder().token(TOKEN).build()
     
-    # إضافة المعالجات
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_file))
     app.add_handler(CallbackQueryHandler(button_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown))
     
-    print("🤖 البوت يعمل...")
-    app.run_polling()
+    print("🤖 البوت يعمل على Railway...")
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    
+    # إبقاء البوت يعمل
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except (KeyboardInterrupt, SystemExit):
+        await app.stop()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
