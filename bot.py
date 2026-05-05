@@ -8,7 +8,11 @@ import threading
 from datetime import datetime
 
 # ==================== التوكن والإعدادات ====================
-TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("❌ BOT_TOKEN is missing from environment variables")
+
+bot = telebot.TeleBot(BOT_TOKEN)
 OWNER_ID = 1013384909
 BOT_NAME = "Mustafa Checker Bot"
 BOT_USERNAME = "@o8380"
