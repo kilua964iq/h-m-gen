@@ -11,7 +11,7 @@ if not BOT_TOKEN:
 
 # إعدادات
 BOT_USERNAME = "@o8380"
-VERSION = "1.0"
+VERSION = "2.0"
 TEMP_DIR = "temp_files"
 
 os.makedirs(TEMP_DIR, exist_ok=True)
@@ -22,49 +22,87 @@ bot = telebot.TeleBot(BOT_TOKEN)
 
 # ==================== دوال مساعدة ====================
 
-def clean_number(text):
-    """استخراج أول 12 رقم فقط من أي نص"""
-    digits = re.sub(r'\D', '', text)  # حذف كل شيء ما عدا الأرقام
-    if len(digits) >= 12:
-        return digits[:12]
-    return None
-
-def extract_date(card_line):
-    """استخراج التاريخ من البطاقة وتحويل 2026 إلى 26"""
-    # البحث عن تاريخ بصيغة MM|YYYY أو MM|YY
-    match = re.search(r'(\d{2})\|(\d{2,4})', card_line)
-    if match:
-        month = match.group(1)
-        year = match.group(2)
+def extract_bin_and_date(card):
+    """
+    استخراج أول 6 أرقام (BIN) والتاريخ من البطاقة
+    الإدخال: xxxxxxxxxxxxxxxx|MM|YY|CVV
+    الإخراج: (first6, month, year, last4_original, cvv_original)
+    """
+    parts = card.split('|')
+    if len(parts) >= 4:
+        card_num = parts[0].strip()
+        month = parts[1].strip()
+        year = parts[2].strip()
+        cvv = parts[3].strip()
+        
+        # معالجة السنة (2026 -> 26)
         if len(year) == 4:
-            year = year[-2:]  # 2026 -> 26
-        return f"{month}|{year}"
-    return None
+            year = year[-2:]
+        
+        # أول 6 أرقام (BIN)
+        first6 = card_num[:6] if len(card_num) >= 6 else card_num
+        
+        # أول 12 رقم (للحفاظ على البطاقة)
+        first12 = card_num[:12] if len(card_num) >= 12 else card_num
+        
+        # آخر 4 أرقام أصلية (للمعلومات فقط)
+        last4_original = card_num[-4:] if len(card_num) >= 4 else ""
+        
+        return first6, first12, month, year, last4_original, cvv
+    
+    return None, None, None, None, None, None
 
 def random_digits(length):
     """توليد أرقام عشوائية بطول محدد"""
     return ''.join([str(random.randint(0, 9)) for _ in range(length)])
 
-def generate_new_card(first12, date, count=10):
-    """توليد 10 بطاقات جديدة من أول 12 رقم والتاريخ"""
+def generate_cards_from_bin(first6, first12, month, year, count=10):
+    """
+    توليد بطاقات جديدة من BIN والتاريخ
+    يولد آخر 4 أرقام عشوائية + CVV عشوائي
+    """
     cards = []
-    seen_cvv = set()  # لتجنب تكرار CVV
+    generated_last4 = set()  # لتجنب تكرار آخر 4 أرقام
+    generated_cvv = set()    # لتجنب تكرار CVV
     
     for _ in range(count):
-        # آخر 4 أرقام عشوائية
+        # توليد آخر 4 أرقام عشوائية (غير مكررة)
         last4 = random_digits(4)
-        # CVV عشوائي 3 أرقام
+        while last4 in generated_last4:
+            last4 = random_digits(4)
+        generated_last4.add(last4)
+        
+        # توليد CVV عشوائي 3 أرقام (غير مكرر)
         cvv = random_digits(3)
-        
-        # التأكد من عدم تكرار CVV (اختياري)
-        while cvv in seen_cvv:
+        while cvv in generated_cvv:
             cvv = random_digits(3)
-        seen_cvv.add(cvv)
+        generated_cvv.add(cvv)
         
-        full_card = f"{first12}{last4}|{date}|{cvv}"
-        cards.append(full_card)
+        # تكوين البطاقة الكاملة: أول12 + آخر4
+        full_card_num = first12 + last4
+        
+        # تنسيق البطاقة
+        card = f"{full_card_num}|{month}|{year}|{cvv}"
+        cards.append(card)
     
     return cards
+
+def get_bin_info(bin6):
+    """جلب معلومات BIN من API (اختياري)"""
+    try:
+        import requests
+        response = requests.get(f"https://lookup.binlist.net/{bin6}", timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            brand = data.get('scheme', 'Unknown').upper()
+            type_card = data.get('type', 'Unknown').upper()
+            country = data.get('country', {}).get('name', 'Unknown')
+            flag = data.get('country', {}).get('emoji', '🏳️')
+            bank = data.get('bank', {}).get('name', 'Unknown')
+            return f"💳 {brand} - {type_card}\n🏦 {bank}\n🌍 {country} {flag}"
+    except:
+        pass
+    return "ℹ️ معلومات BIN غير متوفرة"
 
 
 # ==================== الأزرار ====================
@@ -81,14 +119,17 @@ def start_btn():
 def start_command(message):
     bot.send_message(
         message.chat.id,
-        f"✨ بوت توليد البطاقات الذكي ✨\n\n"
+        f"✨ **بوت توليد البطاقات الذكي V{VERSION}** ✨\n\n"
         f"📌 **كيف يعمل:**\n"
-        f"1️⃣ أرسل ملف txt يحتوي على بطاقات\n"
-        f"2️⃣ يستخرج أول 12 رقم من كل بطاقة\n"
-        f"3️⃣ يحافظ على التاريخ الأصلي\n"
-        f"4️⃣ يولد 4 أرقام عشوائية + CVV عشوائي\n"
-        f"5️⃣ ينتج 10 بطاقات جديدة من كل بطاقة\n\n"
-        f"🔹 {BOT_USERNAME} | الإصدار {VERSION}",
+        f"1️⃣ أرسل ملف `.txt` يحتوي على بطاقات\n"
+        f"2️⃣ يستخرج أول 12 رقم + التاريخ من كل بطاقة\n"
+        f"3️⃣ يحافظ على التاريخ الأصلي (MM|YY)\n"
+        f"4️⃣ يولد آخر 4 أرقام عشوائية لكل بطاقة جديدة\n"
+        f"5️⃣ يولد CVV عشوائي لكل بطاقة جديدة\n"
+        f"6️⃣ ينتج **10 بطاقات جديدة** من كل بطاقة أصلية\n\n"
+        f"📌 **صيغة البطاقة المطلوبة:**\n"
+        f"`xxxxxxxxxxxxxxxx|MM|YY|CVV`\n\n"
+        f"🔹 {BOT_USERNAME}",
         parse_mode='Markdown',
         reply_markup=start_btn()
     )
@@ -110,6 +151,9 @@ def handle_document(message):
         bot.reply_to(message, "❌ يرجى إرسال ملف `.txt` فقط")
         return
     
+    # إعلام المستخدم ببدء المعالجة
+    status_msg = bot.reply_to(message, "🔄 **جاري معالجة البطاقات...**", parse_mode='Markdown')
+    
     # تحميل الملف
     file_info = bot.get_file(message.document.file_id)
     downloaded = bot.download_file(file_info.file_path)
@@ -119,51 +163,58 @@ def handle_document(message):
         f.write(downloaded)
     
     # قراءة البطاقات من الملف
-    cards = []
+    original_cards = []
     with open(input_path, 'r', encoding='utf-8', errors='ignore') as f:
         for line in f:
             line = line.strip()
-            if line:
-                cards.append(line)
+            if line and '|' in line:
+                original_cards.append(line)
     
-    if not cards:
-        bot.reply_to(message, "❌ الملف فارغ!")
+    if not original_cards:
+        bot.reply_to(message, "❌ الملف لا يحتوي على بطاقات صالحة!")
         os.remove(input_path)
         return
     
     # معالجة البطاقات
-    bot.send_message(message.chat.id, "🔄 جاري معالجة البطاقات...")
-    
-    seen_first12 = set()  # لتجنب تكرار أول 12 رقم
+    seen_bins = set()  # لتجنب تكرار BIN
     all_generated = []
-    stats_processed = 0
-    stats_skipped = 0
+    processed = 0
+    skipped = 0
+    bin_info_dict = {}
     
-    for card in cards:
-        # استخراج أول 12 رقم
-        first12 = clean_number(card)
-        if not first12:
-            stats_skipped += 1
+    for card in original_cards:
+        # استخراج البيانات
+        first6, first12, month, year, last4_original, cvv_original = extract_bin_and_date(card)
+        
+        if not first6 or not month or not year:
+            skipped += 1
             continue
         
-        # التحقق من التكرار
-        if first12 in seen_first12:
-            stats_skipped += 1
+        # التحقق من عدم تكرار BIN
+        if first6 in seen_bins:
+            skipped += 1
             continue
-        seen_first12.add(first12)
+        seen_bins.add(first6)
         
-        # استخراج التاريخ
-        date = extract_date(card)
-        if not date:
-            date = "08|26"  # تاريخ افتراضي إذا لم يوجد
+        # تخزين معلومات BIN (اختياري)
+        if first6 not in bin_info_dict:
+            bin_info_dict[first6] = get_bin_info(first6)
         
         # توليد 10 بطاقات جديدة
-        new_cards = generate_new_card(first12, date, count=10)
+        new_cards = generate_cards_from_bin(first6, first12, month, year, count=10)
         all_generated.extend(new_cards)
-        stats_processed += 1
+        processed += 1
     
     # تنظيف الملف المؤقت
     os.remove(input_path)
+    
+    if not all_generated:
+        bot.edit_message_text(
+            "❌ لم يتم توليد أي بطاقات! تأكد من صيغة البطاقات.",
+            message.chat.id,
+            status_msg.message_id
+        )
+        return
     
     # حفظ النتائج
     output_path = os.path.join(TEMP_DIR, f"{user_id}_output.txt")
@@ -177,12 +228,12 @@ def handle_document(message):
             f,
             caption=(
                 f"✅ **تم التوليد بنجاح**\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"📁 البطاقات الأصلية: {len(cards)}\n"
-                f"✅ تمت معالجتها: {stats_processed}\n"
-                f"⏭️ تم تخطيها (مكررة): {stats_skipped}\n"
-                f"🆕 البطاقات المولدة: {len(all_generated)}\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📁 البطاقات الأصلية: `{len(original_cards)}`\n"
+                f"✅ تمت معالجتها: `{processed}`\n"
+                f"⏭️ تم تخطيها: `{skipped}`\n"
+                f"🆕 البطاقات المولدة: `{len(all_generated)}`\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"🔹 {BOT_USERNAME} | V{VERSION}"
             ),
             parse_mode='Markdown'
@@ -190,10 +241,84 @@ def handle_document(message):
     
     # حذف الملف المؤقت
     os.remove(output_path)
+    
+    # تحديث رسالة الحالة
+    bot.edit_message_text(
+        f"✅ **تم الانتهاء!**\n"
+        f"📊 تم توليد `{len(all_generated)}` بطاقة جديدة",
+        message.chat.id,
+        status_msg.message_id,
+        parse_mode='Markdown'
+    )
+
+
+# ==================== أمر /gen يدوي ====================
+
+@bot.message_handler(commands=['gen'])
+def gen_command(message):
+    """معالجة أمر /gen يدوياً"""
+    text = message.text.strip()
+    parts = text.split()
+    
+    if len(parts) < 2:
+        bot.reply_to(
+            message,
+            "❌ **الاستخدام الصحيح:**\n"
+            "`/gen 464005776057|08|2026|`\n\n"
+            "أو\n"
+            "`/gen 464005` (BIN فقط + تاريخ افتراضي 08|26)",
+            parse_mode='Markdown'
+        )
+        return
+    
+    card_input = parts[1]
+    
+    # محاولة استخراج البيانات
+    if '|' in card_input:
+        # صيغة: BIN|MM|YY|CVV (CVV اختياري)
+        bin_part = card_input.split('|')[0]
+        month = card_input.split('|')[1] if len(card_input.split('|')) > 1 else "08"
+        year = card_input.split('|')[2] if len(card_input.split('|')) > 2 else "26"
+        
+        # معالجة السنة
+        if len(year) == 4:
+            year = year[-2:]
+    else:
+        # فقط BIN
+        bin_part = card_input
+        month = "08"
+        year = "26"
+    
+    # استخراج أول 6 أرقام (BIN)
+    first6 = bin_part[:6] if len(bin_part) >= 6 else bin_part
+    # أول 12 رقم
+    first12 = bin_part[:12] if len(bin_part) >= 12 else bin_part.ljust(12, '0')
+    
+    # توليد 10 بطاقات
+    cards = generate_cards_from_bin(first6, first12, month, year, count=10)
+    
+    # جلب معلومات BIN
+    bin_info = get_bin_info(first6)
+    
+    # تنسيق الرد
+    response = f"✨ **تم توليد 10 بطاقات من BIN {first6}** ✨\n"
+    response += f"━━━━━━━━━━━━━━━━━━━━━━\n"
+    response += f"📅 التاريخ: `{month}|{year}`\n"
+    response += f"{bin_info}\n"
+    response += f"━━━━━━━━━━━━━━━━━━━━━━\n"
+    
+    for card in cards:
+        response += f"`{card}`\n"
+    
+    response += f"━━━━━━━━━━━━━━━━━━━━━━\n"
+    response += f"🔹 {BOT_USERNAME} | V{VERSION}"
+    
+    bot.reply_to(message, response, parse_mode='Markdown')
 
 
 # ==================== التشغيل ====================
 
 if __name__ == "__main__":
     print(f"✅ بوت {BOT_USERNAME} شغال...")
+    print(f"📁 مجلد الملفات المؤقتة: {TEMP_DIR}")
     bot.infinity_polling(timeout=30)
