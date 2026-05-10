@@ -520,7 +520,7 @@ def create_count_keyboard() -> InlineKeyboardMarkup:
 
 @bot.message_handler(commands=['start'])
 def start_command(message):
-    """معالج أمر /start"""
+    """معالج أمر /start مع فيديو ترحيبي"""
     uid = message.from_user.id
     name = message.from_user.first_name or "صديقي"
     
@@ -534,47 +534,35 @@ def start_command(message):
     settings["name"] = name
     save_user_settings(uid, settings)
     
-    # رسالة الترحيب
-    welcome_text = f"""
-╔══════════════════════════╗
-║  🔥  *Card Generator Pro*  ║
-╚══════════════════════════╝
+    # نص الفيديو (مزخرف بالعربي مثل الصورة)
+    video_caption = """<blockquote><b><i><a href="t.me/o8380">✦</a> "CC Checker Status: <a href="https://t.me/MustafaChkBot?start=_tgr_pB0JUR8xNDY0">ACTIVE VIP ✓</a>  <a href="t.me/o8380">✦</a>
+━━━━━━━━━━━━━━━━
+<tg-emoji emoji-id="5989984458718056172">📌</tg-emoji> CC Checker Professional with Live Results <tg-emoji emoji-id="5388632425314140043">🔈</tg-emoji>
 
-👋 أهلاً بك *{name}*
+<tg-emoji emoji-id="5771868281212245617">📢</tg-emoji> Join <a href="t.me/Mustafa964iq">- Mustafa Channel</a> for Free Keys & Updates
 
-📤 أرسل ملف `.txt` لبدء التوليد
-
-━━━━━━━━━━━━━━━━━━━━━━━━
-🏷 {BOT_TAG} · v{VERSION}
-"""
-    bot.send_message(
-        message.chat.id,
-        welcome_text,
-        parse_mode="Markdown",
-        reply_markup=create_main_menu(uid)
-    )
-
-@bot.message_handler(commands=['reset'])
-def reset_command(message):
-    """معالج أمر /reset"""
-    uid = message.from_user.id
-    user_data.pop(uid, None)
-    user_steps.pop(uid, None)
+- Bot By :> <a href="t.me/o8380">- ✦ Mustafa 964 ✦</a>
+- How To Use The Bot :> <a href="t.me/Mustafa964iq/2">-✦ Click Here For Tutorial ✦</a>
+ 𝐕𝐞𝐫𝐬𝐢𝐨𝐧 -> 𝟕.𝟎</i></b></blockquote>"""
     
-    # حذف الملفات المؤقتة
-    for f in TEMP_DIR.glob(f"{uid}_*"):
-        try:
-            f.unlink()
-        except:
-            pass
-    
-    bot.reply_to(
-        message,
-        "🔄 *تم إعادة التعيين*\n\nأرسل /start للبدء من جديد",
-        parse_mode="Markdown"
-    )
-
-# ══════════════════════════════════════════════════════════════
+    # إرسال فيديو ترحيبي مع الأزرار
+    try:
+        bot.send_video(
+            message.chat.id,
+            video="https://t.me/Mustafa964iq/3",  # نفس الفيديو اللي عندك
+            caption=video_caption,
+            parse_mode="HTML",
+            reply_markup=create_main_menu(uid)
+        )
+    except Exception as e:
+        # لو فشل الفيديو، نرسل رسالة عادية بديلة
+        bot.send_message(
+            message.chat.id,
+            f"👋 أهلاً بك *{name}*\n📤 أرسل ملف `.txt` لبدء التوليد",
+            parse_mode="Markdown",
+            reply_markup=create_main_menu(uid)
+        )
+        logger.error(f"Video send failed: {e}")# ══════════════════════════════════════════════════════════════
 # ██  معالجات الأزرار  ██
 # ══════════════════════════════════════════════════════════════
 
