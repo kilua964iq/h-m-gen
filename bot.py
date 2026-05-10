@@ -50,7 +50,7 @@ if not BOT_TOKEN:
 OWNER_ID = int(os.environ.get("OWNER_ID", "6285783725"))
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 BOT_TAG = "@o8380"
-VERSION = "4.0 Pro"
+VERSION = "1.0"
 
 # ══════════════════════════════════════════════════════════════
 # المسارات
@@ -543,80 +543,9 @@ def start_command(message):
 └─ @{username}
 
 📤 *Send .txt file to start*
-📌 *الصيغة: `NUM|MM|YY|CVV`*
 
 ━━━━━━━━━━━━━━━━━━━
-⚡ *{BOT_TAG} · v{VERSION}*
-"""
-    
-    # ✅ فيديو ترحيبي مع النص الجديد
-    try:
-        bot.send_video(
-            message.chat.id,
-            video="https://t.me/Mustafa964iq/3",
-            caption=video_caption,
-            parse_mode="Markdown",
-            reply_markup=create_main_menu(uid)
-        )
-    except Exception as e:
-        # لو فشل الفيديو، يرسل نص بديل
-        bot.send_message(
-            message.chat.id,
-            f"👋 أهلاً بك *{name}*\n📤 أرسل ملف `.txt` لبدء التوليد",
-            parse_mode="Markdown",
-            reply_markup=create_main_menu(uid)
-        )
-        logger.error(f"Video send failed: {e}")# ██  معالجات الأزرار  ██
-# ══════════════════════════════════════════════════════════════
-
-@bot.callback_query_handler(func=lambda call: call.data == "upload_file")
-def upload_file_callback(call):
-    """معالج زر رفع الملف"""
-    bot.answer_callback_query(call.id)
-    bot.send_message(
-        call.message.chat.id,
-        "📤 *أرسل ملف `.txt` الآن*\n\n"
-        "┌─────────────────────┐\n"
-        "│ الصيغة: `NUM|MM|YY|CVV`\n"
-        "│ مثال: `4111111111111111|08|26|123`\n"
-        "└─────────────────────┘",
-        parse_mode="Markdown",
-        reply_markup=create_back_button()
-    )
-    user_steps[call.from_user.id] = "waiting_file"
-@bot.message_handler(commands=['start'])
-def start_command(message):
-    """معالج أمر /start مع فيديو ترحيبي"""
-    uid = message.from_user.id
-    name = message.from_user.first_name or "صديقي"
-    
-    # تحديث الإحصائيات
-    stats = load_stats()
-    stats["total_users"] += 1
-    save_stats(stats)
-    
-    # حفظ إعدادات المستخدم
-    settings = load_user_settings(uid)
-    settings["name"] = name
-    save_user_settings(uid, settings)
-    
-    # نص الفيديو المزخرف
-    video_caption = f"""
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃        🔥 *GEN PRO* 🔥          ┃
-┃    {BOT_TAG} · v{VERSION}       ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
-✨ *Welcome / أهلاً بك* ✨
-└── @{message.from_user.username or name}
-
-┌────────────────────────────────┐
-│  📤 *أرسل ملف `.txt` لبدء العمل* │
-│  📌 الصيغة: `NUM|MM|YY|CVV`     │
-└────────────────────────────────┘
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚡ *Powered by @o8380* ⚡
+⚡ *{BOT_TAG} · {VERSION}*
 """
     
     # إرسال فيديو ترحيبي
@@ -635,7 +564,82 @@ def start_command(message):
             parse_mode="Markdown",
             reply_markup=create_main_menu(uid)
         )
-        logger.error(f"Video send failed: {e}")# ══════════════════════════════════════════════════════════════
+        logger.error(f"Video send failed: {e}")
+
+# ══════════════════════════════════════════════════════════════
+# ██  معالجات الأزرار  ██
+# ══════════════════════════════════════════════════════════════
+
+@bot.callback_query_handler(func=lambda call: call.data == "upload_file")
+def upload_file_callback(call):
+    """معالج زر رفع الملف"""
+    bot.answer_callback_query(call.id)
+    bot.send_message(
+        call.message.chat.id,
+        "📤 *أرسل ملف `.txt` الآن*\n\n"
+        "┌─────────────────────┐\n"
+        "│ 📌 الصيغة: `NUM|MM|YY|CVV`\n"
+        "│ مثال: `4111111111111111|08|26|123`\n"
+        "└─────────────────────┘",
+        parse_mode="Markdown",
+        reply_markup=create_back_button()
+    )
+    user_steps[call.from_user.id] = "waiting_file"
+
+@bot.callback_query_handler(func=lambda call: call.data == "back")
+def back_callback(call):
+    """معالج زر الرجوع"""
+    bot.answer_callback_query(call.id)
+    uid = call.from_user.id
+    name = call.from_user.first_name or "صديقي"
+    user_steps.pop(uid, None)
+    
+    bot.edit_message_text(
+        f"""
+🌟 *GEN PRO* 🌟
+━━━━━━━━━━━━━━━━━━━
+✨ *Welcome / أهلاً بك* ✨
+└─ @{name}
+
+📤 *Send .txt file to start*
+
+━━━━━━━━━━━━━━━━━━━
+⚡ *{BOT_TAG} · {VERSION}*
+""",
+        call.message.chat.id,
+        call.message.message_id,
+        parse_mode="Markdown",
+        reply_markup=create_main_menu(uid)
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data == "cancel")
+def cancel_callback(call):
+    """معالج زر الإلغاء"""
+    bot.answer_callback_query(call.id, "✅ تم الإلغاء")
+    uid = call.from_user.id
+    name = call.from_user.first_name or "صديقي"
+    user_steps.pop(uid, None)
+    user_data.pop(uid, None)
+    
+    bot.edit_message_text(
+        f"""
+🌟 *GEN PRO* 🌟
+━━━━━━━━━━━━━━━━━━━
+✨ *Welcome / أهلاً بك* ✨
+└─ @{name}
+
+📤 *Send .txt file to start*
+
+━━━━━━━━━━━━━━━━━━━
+⚡ *{BOT_TAG} · {VERSION}*
+""",
+        call.message.chat.id,
+        call.message.message_id,
+        parse_mode="Markdown",
+        reply_markup=create_main_menu(uid)
+    )
+
+# ══════════════════════════════════════════════════════════════
 # ██  معالج رفع الملف  ██
 # ══════════════════════════════════════════════════════════════
 
@@ -727,7 +731,7 @@ def handle_document(message):
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 📏 *كم رقم تريد تاخذ من البطاقة الأصلية؟*
-(الباقي يُولَّد عشوائياً + Luhn مضمون)
+(الباقي يُولَّد عشوائياً)
 
 ✅ الافتراضي الموصى به: `12`""",
             message.chat.id,
@@ -870,19 +874,16 @@ def count_callback(call):
         save_stats(stats)
         
         # إرسال الملف
-        caption = f"""╔══════════════════════════╗
-║  🎉  *تم التوليد بنجاح!*  ║
-╚══════════════════════════╝
-
+        caption = f"""🎉 *تم التوليد بنجاح!*
+━━━━━━━━━━━━━━━━━━━━━━━━
 ├ 🆕 البطاقات المولدة: `{len(all_cards)}`
 ├ 🗂 عدد BINs المستخدمة: `{len(analyzed)}`
 ├ 📏 طول الرقم: `{digits}`
 ├ 📅 التاريخ: `{'ثابت' if date_mode == 'fixed' else 'عشوائي'}`
-├ 🔐 CVV: `{'ثابت' if cvv_mode == 'fixed' else 'عشوائي'}`
-└ ✅ Luhn: `مضمون 100%`
+└ 🔐 CVV: `{'ثابت' if cvv_mode == 'fixed' else 'عشوائي'}`
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
-🏷 {BOT_TAG} · v{VERSION}"""
+🏷 {BOT_TAG} · {VERSION}"""
 
         with open(output_file, 'rb') as f:
             bot.send_document(
@@ -946,7 +947,7 @@ def admin_command(message):
    المجموع: `{len(bins)}`
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
-🏷 {BOT_TAG} · v{VERSION}
+🏷 {BOT_TAG} · {VERSION}
 """
     bot.reply_to(message, text, parse_mode="Markdown")
 
@@ -1000,9 +1001,9 @@ if __name__ == "__main__":
     print("""
 ╔══════════════════════════════════════════════════════════════╗
 ║                                                              ║
-║              🔥 Card Generator Pro — by @o8380              ║
+║              🔥 GEN PRO — by @o8380                         ║
 ║                                                              ║
-║              Version: 4.0 Pro | telebot                     ║
+║              Version: 1.0 | telebot                         ║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
     """)
