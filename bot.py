@@ -1,109 +1,151 @@
+# -*- coding: utf-8 -*-
 """
 ╔══════════════════════════════════════════════════════════════╗
 ║          🔥 Card Generator Pro  — by @o8380                 ║
 ║  متغيرات البيئة المطلوبة:                                   ║
 ║    BOT_TOKEN      – توكن البوت من @BotFather               ║
 ║    OWNER_ID       – معرف المالك (رقم)                       ║
-║    OPENAI_API_KEY – مفتاح OpenAI                            ║
+║    OPENAI_API_KEY – مفتاح OpenAI (اختياري)                  ║
 ╚══════════════════════════════════════════════════════════════╝
 """
 
-import os, json, random, time, re, asyncio, logging, datetime
+import os
+import json
+import random
+import time
+import re
+import threading
+import logging
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, List, Any
 
 import requests
-from openai import OpenAI
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
-from telegram.ext import (
-    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    ContextTypes, ConversationHandler, filters,
-)
+# محاولة استيراد OpenAI
+try:
+    from openai import OpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
 
 # ══════════════════════════════════════════════════════════════
-# السجلات
+# السجلات والإعدادات
 # ══════════════════════════════════════════════════════════════
 logging.basicConfig(
-    format="%(asctime)s | %(levelname)s | %(message)s",
-    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
 # ══════════════════════════════════════════════════════════════
-# الثوابت
+# الثوابت من متغيرات البيئة
 # ══════════════════════════════════════════════════════════════
-BOT_TOKEN      = os.environ["BOT_TOKEN"]
-OWNER_ID       = int(os.environ.get("OWNER_ID", "6285783725"))
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+if not BOT_TOKEN:
+    BOT_TOKEN = "ضع_توكنك_هنا"
+
+OWNER_ID = int(os.environ.get("OWNER_ID", "6285783725"))
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-BOT_TAG        = "@o8380"
-VERSION        = "3.0 Pro"
+BOT_TAG = "@o8380"
+VERSION = "4.0 Pro"
 
 # ══════════════════════════════════════════════════════════════
 # المسارات
 # ══════════════════════════════════════════════════════════════
-DATA_DIR       = Path("data")
-USER_DATA_DIR  = DATA_DIR / "user_data"
-TEMP_DIR       = Path("temp_files")
-PRIVATE_BINS_F = DATA_DIR / "private_bins.json"
-STATS_F        = DATA_DIR / "stats.json"
+DATA_DIR = Path("data")
+USER_DATA_DIR = DATA_DIR / "user_data"
+TEMP_DIR = Path("temp_files")
+PRIVATE_BINS_FILE = DATA_DIR / "private_bins.json"
+STATS_FILE = DATA_DIR / "stats.json"
 
-for _d in [DATA_DIR, USER_DATA_DIR, TEMP_DIR]:
-    _d.mkdir(parents=True, exist_ok=True)
-
-# ══════════════════════════════════════════════════════════════
-# مراحل المحادثة
-# ══════════════════════════════════════════════════════════════
-ST_IDLE, ST_BIN_TYPE, ST_DIGITS, ST_DATE_MODE, ST_CVV_MODE, ST_COUNT = range(6)
+for directory in [DATA_DIR, USER_DATA_DIR, TEMP_DIR]:
+    directory.mkdir(parents=True, exist_ok=True)
 
 # ══════════════════════════════════════════════════════════════
-# OpenAI
+# OpenAI Client (مخفي)
 # ══════════════════════════════════════════════════════════════
-ai_client: Optional[OpenAI] = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+ai_client = None
+if OPENAI_AVAILABLE and OPENAI_API_KEY:
+    try:
+        ai_client = OpenAI(api_key=OPENAI_API_KEY)
+        logger.info("✅ OpenAI client initialized")
+    except Exception as e:
+        logger.warning(f"OpenAI init failed: {e}")
+
+# ══════════════════════════════════════════════════════════════
+# إنشاء البوت
+# ══════════════════════════════════════════════════════════════
+bot = telebot.TeleBot(BOT_TOKEN)
+
+# إزالة أي ويب هوك قديم
+try:
+    bot.remove_webhook()
+except:
+    pass
+
+time.sleep(1)
+
+# ══════════════════════════════════════════════════════════════
+# قاموس لتخزين بيانات المستخدمين المؤقتة
+# ══════════════════════════════════════════════════════════════
+user_data: Dict[int, Dict] = {}
+user_steps: Dict[int, str] = {}
 
 # ══════════════════════════════════════════════════════════════
 # ██  أدوات JSON  ██
 # ══════════════════════════════════════════════════════════════
 
-def _jload(path: Path, default):
-    if path.exists():
+def load_user_settings(uid: int) -> dict:
+    """تحميل إعدادات المستخدم"""
+    file_path = USER_DATA_DIR / f"{uid}.json"
+    if file_path.exists():
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+            return json.loads(file_path.read_text(encoding="utf-8"))
+        except:
             pass
-    return default
+    return {}
 
-def _jsave(path: Path, data):
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+def save_user_settings(uid: int, data: dict):
+    """حفظ إعدادات المستخدم"""
+    file_path = USER_DATA_DIR / f"{uid}.json"
+    file_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-def load_user(uid: int) -> dict:
-    return _jload(USER_DATA_DIR / f"{uid}.json", {})
+def load_private_bins() -> dict:
+    """تحميل BINs الخاصة (مخفي)"""
+    if PRIVATE_BINS_FILE.exists():
+        try:
+            return json.loads(PRIVATE_BINS_FILE.read_text(encoding="utf-8"))
+        except:
+            pass
+    return {}
 
-def save_user(uid: int, data: dict):
-    _jsave(USER_DATA_DIR / f"{uid}.json", data)
-
-def load_pbins() -> dict:
-    return _jload(PRIVATE_BINS_F, {})
-
-def save_pbins(d: dict):
-    _jsave(PRIVATE_BINS_F, d)
+def save_private_bins(data: dict):
+    """حفظ BINs الخاصة (مخفي)"""
+    PRIVATE_BINS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 def load_stats() -> dict:
-    d = _jload(STATS_F, {"total_files": 0, "total_generated": 0, "total_users": [], "sessions": []})
-    d["total_users"] = set(d.get("total_users", []))
-    return d
+    """تحميل الإحصائيات"""
+    if STATS_FILE.exists():
+        try:
+            return json.loads(STATS_FILE.read_text(encoding="utf-8"))
+        except:
+            pass
+    return {"total_files": 0, "total_generated": 0, "total_users": 0}
 
-def save_stats(d: dict):
-    out = dict(d)
-    out["total_users"] = list(d["total_users"])
-    _jsave(STATS_F, out)
+def save_stats(data: dict):
+    """حفظ الإحصائيات"""
+    STATS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 # ══════════════════════════════════════════════════════════════
-# ██  Luhn  ██
+# ██  Luhn Algorithm  ██
 # ══════════════════════════════════════════════════════════════
 
-def luhn_check(num: str) -> bool:
-    digits = [int(c) for c in num if c.isdigit()]
+def luhn_check(card_num: str) -> bool:
+    """التحقق من صحة الرقم باستخدام Luhn Algorithm"""
+    digits = [int(d) for d in str(card_num) if d.isdigit()]
     if len(digits) < 13:
         return False
     total = 0
@@ -116,6 +158,7 @@ def luhn_check(num: str) -> bool:
     return total % 10 == 0
 
 def luhn_digit(partial: str) -> str:
+    """حساب الرقم الأخير لضمان صحة Luhn"""
     for n in range(10):
         if luhn_check(partial + str(n)):
             return str(n)
@@ -126,840 +169,866 @@ def luhn_digit(partial: str) -> str:
 # ══════════════════════════════════════════════════════════════
 
 def parse_card(line: str) -> Optional[dict]:
+    """تحليل سطر بطاقة واستخراج البيانات"""
     line = line.strip()
     if not line or line.startswith("#") or "|" not in line:
         return None
     parts = line.split("|")
     if len(parts) < 4:
         return None
-    num   = re.sub(r"\D", "", parts[0].strip())
+    
+    card_num = re.sub(r"\D", "", parts[0].strip())
     month = parts[1].strip().zfill(2)
-    year  = parts[2].strip()
-    cvv   = parts[3].strip()
-    if len(num) < 13 or not month.isdigit() or not year.isdigit():
+    year = parts[2].strip()
+    cvv = parts[3].strip()
+    
+    if len(card_num) < 13 or not month.isdigit() or not year.isdigit():
         return None
+    
     if len(year) == 4:
         year = year[-2:]
-    return {"num": num, "month": month, "year": year, "cvv": cvv, "bin6": num[:6]}
+    
+    return {
+        "num": card_num,
+        "month": month,
+        "year": year,
+        "cvv": cvv,
+        "bin6": card_num[:6]
+    }
 
 def is_expired(month: str, year: str) -> bool:
+    """التحقق من صلاحية البطاقة"""
     try:
-        now = datetime.datetime.now()
-        ey  = int("20" + year) if len(year) == 2 else int(year)
-        em  = int(month)
-        return datetime.datetime(ey, em, 1) < datetime.datetime(now.year, now.month, 1)
-    except Exception:
+        now = datetime.now()
+        exp_year = int("20" + year) if len(year) == 2 else int(year)
+        exp_month = int(month)
+        return datetime(exp_year, exp_month, 1) < datetime(now.year, now.month, 1)
+    except:
         return False
 
-def filter_cards(raw: list[str]) -> dict:
-    st = {
-        "original": len(raw),
-        "invalid": 0, "expired": 0,
-        "luhn_fail": 0, "dup_card": 0, "dup_bin": 0,
-        "valid": [],
+def filter_cards(lines: List[str]) -> dict:
+    """تصفية البطاقات (Luhn + تاريخ + مكررات + BINs مكررة)"""
+    result = {
+        "original": len(lines),
+        "invalid": 0,
+        "expired": 0,
+        "luhn_fail": 0,
+        "dup_card": 0,
+        "dup_bin": 0,
+        "valid": []
     }
-    seen_cards: set = set()
-    seen_bins:  set = set()
-    for line in raw:
-        c = parse_card(line)
-        if not c:
-            st["invalid"] += 1
+    seen_cards = set()
+    seen_bins = set()
+    
+    for line in lines:
+        card = parse_card(line)
+        if not card:
+            result["invalid"] += 1
             continue
-        if is_expired(c["month"], c["year"]):
-            st["expired"] += 1
+        
+        if is_expired(card["month"], card["year"]):
+            result["expired"] += 1
             continue
-        if not luhn_check(c["num"]):
-            st["luhn_fail"] += 1
+        
+        if not luhn_check(card["num"]):
+            result["luhn_fail"] += 1
             continue
-        fp = f"{c['num']}|{c['month']}|{c['year']}"
-        if fp in seen_cards:
-            st["dup_card"] += 1
+        
+        card_key = f"{card['num']}|{card['month']}|{card['year']}"
+        if card_key in seen_cards:
+            result["dup_card"] += 1
             continue
-        seen_cards.add(fp)
-        if c["bin6"] in seen_bins:
-            st["dup_bin"] += 1
+        seen_cards.add(card_key)
+        
+        if card["bin6"] in seen_bins:
+            result["dup_bin"] += 1
             continue
-        seen_bins.add(c["bin6"])
-        st["valid"].append(c)
-    return st
+        seen_bins.add(card["bin6"])
+        
+        result["valid"].append(card)
+    
+    return result
 
 # ══════════════════════════════════════════════════════════════
-# ██  BIN Analysis  ██
+# ██  BIN Analysis (مخفي)  ██
 # ══════════════════════════════════════════════════════════════
 
-_BIN_CACHE: dict = {}
+BIN_CACHE = {}
 
-def fetch_bin(bin6: str) -> dict:
-    if bin6 in _BIN_CACHE:
-        return _BIN_CACHE[bin6]
+def fetch_bin_info(bin6: str) -> dict:
+    """جلب معلومات BIN من binlist.net"""
+    if bin6 in BIN_CACHE:
+        return BIN_CACHE[bin6]
+    
     try:
-        r = requests.get(
+        response = requests.get(
             f"https://lookup.binlist.net/{bin6}",
             headers={"Accept-Version": "3"},
-            timeout=6,
+            timeout=6
         )
-        if r.status_code == 200:
-            d = r.json()
+        if response.status_code == 200:
+            data = response.json()
             info = {
-                "scheme":  d.get("scheme", "?").upper(),
-                "type":    d.get("type",   "?").upper(),
-                "bank":    d.get("bank",   {}).get("name", "Unknown"),
-                "country": d.get("country",{}).get("name", "Unknown"),
-                "flag":    d.get("country",{}).get("emoji", "🏳️"),
-                "prepaid": d.get("prepaid", False),
+                "scheme": data.get("scheme", "?").upper(),
+                "type": data.get("type", "?").upper(),
+                "bank": data.get("bank", {}).get("name", "Unknown"),
+                "country": data.get("country", {}).get("name", "Unknown"),
+                "flag": data.get("country", {}).get("emoji", "🏳️"),
+                "prepaid": data.get("prepaid", False)
             }
-            _BIN_CACHE[bin6] = info
+            BIN_CACHE[bin6] = info
             return info
-    except Exception:
+    except:
         pass
     return {}
 
 def classify_bin(info: dict) -> str:
-    scheme  = info.get("scheme", "")
+    """تصنيف BIN (مخفي - يستخدم للتخزين فقط)"""
+    scheme = info.get("scheme", "")
     country = info.get("country", "")
     prepaid = info.get("prepaid", False)
+    
     if prepaid or scheme in ("UNIONPAY", "MIR") or country not in ("United States", "United Kingdom", ""):
         return "private"
     if scheme in ("AMEX", "DISCOVER", "DINERS"):
         return "semi"
     return "public"
 
-def store_bin(bin6: str, info: dict, cls: str):
-    db = load_pbins()
+def store_private_bin(bin6: str, info: dict, cls: str):
+    """تخزين BIN خاص (مخفي)"""
+    db = load_private_bins()
     if bin6 not in db:
-        db[bin6] = {"info": info, "classification": cls,
-                    "first_seen": datetime.datetime.now().isoformat(), "usage": 0}
+        db[bin6] = {
+            "info": info,
+            "classification": cls,
+            "first_seen": datetime.now().isoformat(),
+            "usage": 0
+        }
     else:
         db[bin6]["usage"] = db[bin6].get("usage", 0) + 1
-    save_pbins(db)
+    save_private_bins(db)
 
-def analyze_bins(cards: list[dict]) -> list[dict]:
-    out = []
-    for c in cards:
-        info = fetch_bin(c["bin6"])
-        cls  = classify_bin(info)
-        store_bin(c["bin6"], info, cls)
-        out.append({**c, "bin_info": info, "cls": cls})
-        time.sleep(0.12)
-    return out
+def analyze_bins(cards: List[dict]) -> List[dict]:
+    """تحليل BINs (مخفي)"""
+    analyzed = []
+    for card in cards:
+        info = fetch_bin_info(card["bin6"])
+        cls = classify_bin(info)
+        store_private_bin(card["bin6"], info, cls)
+        analyzed.append({**card, "bin_info": info, "cls": cls})
+        time.sleep(0.1)
+    return analyzed
 
 # ══════════════════════════════════════════════════════════════
-# ██  AI  (مخفي عن المستخدم)  ██
+# ██  AI Hidden Function  ██
 # ══════════════════════════════════════════════════════════════
 
-def ai_hidden_note(analyzed: list[dict]) -> str:
+def ai_hidden_analysis(analyzed: List[dict]) -> str:
+    """تحليل AI مخفي (لا يظهر للمستخدم)"""
     if not ai_client or not analyzed:
         return ""
     try:
-        summary = "\n".join(
-            f"BIN {c['bin6']}: {c['cls']} | {c['bin_info'].get('scheme','')} | {c['bin_info'].get('country','')}"
-            for c in analyzed[:12]
-        )
-        r = ai_client.chat.completions.create(
+        summary = "\n".join([
+            f"BIN {c['bin6']}: {c['cls']} | {c['bin_info'].get('scheme', '')}"
+            for c in analyzed[:10]
+        ])
+        response = ai_client.chat.completions.create(
             model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content":
-                f"حلل هذه البيانات وأعط توصية مختصرة (جملتان) عن جودتها:\n{summary}"}],
+            messages=[{
+                "role": "user",
+                "content": f"Analyze these BINs and give short recommendation (2 sentences):\n{summary}"
+            }],
             max_tokens=100,
-            temperature=0.3,
+            temperature=0.3
         )
-        return r.choices[0].message.content.strip()
+        return response.choices[0].message.content.strip()
     except Exception as e:
-        logger.warning(f"AI: {e}")
+        logger.warning(f"AI error: {e}")
         return ""
 
 # ══════════════════════════════════════════════════════════════
 # ██  توليد البطاقات  ██
 # ══════════════════════════════════════════════════════════════
 
-def gen_cards(card: dict, digits: int, date_mode: str, cvv_mode: str, count: int) -> list[str]:
-    base     = card["num"][:digits]
+def generate_cards(
+    card: dict,
+    digits: int,
+    date_mode: str,
+    cvv_mode: str,
+    count: int
+) -> List[str]:
+    """توليد بطاقات جديدة من بطاقة أصلية"""
+    base = card["num"][:digits]
     full_len = 16
-    results  = []
-    seen:    set = set()
-    max_try  = count * 60
-
-    for _ in range(max_try):
+    results = []
+    seen = set()
+    max_attempts = count * 60
+    
+    for _ in range(max_attempts):
         if len(results) >= count:
             break
+        
         remaining = full_len - len(base) - 1
-        middle    = "".join(str(random.randint(0, 9)) for _ in range(remaining))
-        partial   = base + middle
-        check     = luhn_digit(partial)
-        num       = partial + check
-        if not luhn_check(num):
+        middle = "".join(str(random.randint(0, 9)) for _ in range(remaining))
+        partial = base + middle
+        check = luhn_digit(partial)
+        new_num = partial + check
+        
+        if not luhn_check(new_num):
             continue
-
+        
         month = card["month"] if date_mode == "fixed" else str(random.randint(1, 12)).zfill(2)
-        year  = card["year"]  if date_mode == "fixed" else str(random.randint(26, 30))
-        cvv   = card["cvv"]   if cvv_mode  == "fixed" else str(random.randint(100, 999))
-
-        fp = f"{num}|{month}|{year}|{cvv}"
-        if fp not in seen:
-            seen.add(fp)
-            results.append(fp)
-
+        year = card["year"] if date_mode == "fixed" else str(random.randint(26, 30))
+        cvv = card["cvv"] if cvv_mode == "fixed" else str(random.randint(100, 999))
+        
+        card_line = f"{new_num}|{month}|{year}|{cvv}"
+        if card_line not in seen:
+            seen.add(card_line)
+            results.append(card_line)
+    
     return results
 
 # ══════════════════════════════════════════════════════════════
-# ██  لوحات المفاتيح  ██
+# ██  دوال إنشاء لوحات المفاتيح (بالألوان والأيقونات)  ██
 # ══════════════════════════════════════════════════════════════
 
-def kb_main(owner=False) -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton("📤  رفع ملف بطاقات", callback_data="upload_hint")],
-        [
-            InlineKeyboardButton("ℹ️  معلومات",  callback_data="cb_info"),
-            InlineKeyboardButton("💡  مساعدة",   callback_data="cb_help"),
-        ],
+def create_main_menu(uid: int = None) -> InlineKeyboardMarkup:
+    """القائمة الرئيسية - زر رفع ملف فقط"""
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        InlineKeyboardButton(
+            "📤 رفع ملف",
+            callback_data="upload_file",
+            style="success",
+            icon_custom_emoji_id="5330274810582827128"
+        )
+    )
+    return markup
+
+def create_back_button() -> InlineKeyboardMarkup:
+    """زر رجوع"""
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton(
+            "🔙 رجوع",
+            callback_data="back",
+            style="danger",
+            icon_custom_emoji_id="5060247798616687432"
+        )
+    )
+    return markup
+
+def create_digits_keyboard() -> InlineKeyboardMarkup:
+    """لوحة اختيار عدد الأرقام"""
+    markup = InlineKeyboardMarkup(row_width=3)
+    buttons = [
+        InlineKeyboardButton("6", callback_data="digits_6", style="primary"),
+        InlineKeyboardButton("8", callback_data="digits_8", style="primary"),
+        InlineKeyboardButton("10", callback_data="digits_10", style="primary"),
+        InlineKeyboardButton("12 ✅", callback_data="digits_12", style="primary"),
+        InlineKeyboardButton("14", callback_data="digits_14", style="primary"),
+        InlineKeyboardButton("16", callback_data="digits_16", style="primary"),
     ]
-    if owner:
-        rows += [
-            [
-                InlineKeyboardButton("📊  لوحة التحكم",   callback_data="owner_dash"),
-                InlineKeyboardButton("🗑  تنظيف BINs",    callback_data="owner_clear"),
-            ],
-            [InlineKeyboardButton("📤  تصدير BINs", callback_data="owner_export")],
-        ]
-    return InlineKeyboardMarkup(rows)
-
-def kb_bin_type(pc, sc, pu) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"🔒  Private فقط  [{pc}]",          callback_data="bt_private")],
-        [InlineKeyboardButton(f"🔒+📈  Private + Semi  [{pc+sc}]", callback_data="bt_semi")],
-        [InlineKeyboardButton(f"🌐  جميع BINs  [{pc+sc+pu}]",      callback_data="bt_all")],
-        [InlineKeyboardButton("❌  إلغاء",                          callback_data="cancel")],
-    ])
-
-def kb_digits() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("6",     callback_data="dg_6"),
-            InlineKeyboardButton("8",     callback_data="dg_8"),
-            InlineKeyboardButton("10",    callback_data="dg_10"),
-        ],
-        [
-            InlineKeyboardButton("12 ✅", callback_data="dg_12"),
-            InlineKeyboardButton("14",    callback_data="dg_14"),
-            InlineKeyboardButton("16",    callback_data="dg_16"),
-        ],
-        [InlineKeyboardButton("❌  إلغاء", callback_data="cancel")],
-    ])
-
-def kb_date() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("📅  ثابت",    callback_data="dt_fixed"),
-            InlineKeyboardButton("🎲  عشوائي",  callback_data="dt_random"),
-        ],
-        [InlineKeyboardButton("❌  إلغاء", callback_data="cancel")],
-    ])
-
-def kb_cvv() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("🔐  ثابت",    callback_data="cv_fixed"),
-            InlineKeyboardButton("🎲  عشوائي",  callback_data="cv_random"),
-        ],
-        [InlineKeyboardButton("❌  إلغاء", callback_data="cancel")],
-    ])
-
-def kb_count() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("5",   callback_data="cn_5"),
-            InlineKeyboardButton("10",  callback_data="cn_10"),
-            InlineKeyboardButton("20",  callback_data="cn_20"),
-        ],
-        [
-            InlineKeyboardButton("50",  callback_data="cn_50"),
-            InlineKeyboardButton("100", callback_data="cn_100"),
-            InlineKeyboardButton("200", callback_data="cn_200"),
-        ],
-        [InlineKeyboardButton("❌  إلغاء", callback_data="cancel")],
-    ])
-
-def kb_home() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🏠  الرئيسية", callback_data="home")]
-    ])
-
-# ══════════════════════════════════════════════════════════════
-# ██  نصوص ثابتة  ██
-# ══════════════════════════════════════════════════════════════
-
-def txt_welcome(name: str) -> str:
-    return (
-        "╔══════════════════════════╗\n"
-        "║  🔥  *Card Generator Pro*  ║\n"
-        "╚══════════════════════════╝\n\n"
-        f"👋 أهلاً *{name}*\n\n"
-        "┌─────────────────────────┐\n"
-        "│  ⚡ مدعوم بالذكاء الاصطناعي\n"
-        "│  ✅ Luhn Algorithm مدمج\n"
-        "│  🔍 تحليل BINs تلقائي\n"
-        "│  🔒 تصنيف Private / Semi / Public\n"
-        "└─────────────────────────┘\n\n"
-        "👇 _اختر من القائمة:_\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━\n🏷 `{BOT_TAG}` · v{VERSION}"
+    markup.add(*buttons[:3])
+    markup.add(*buttons[3:6])
+    markup.add(
+        InlineKeyboardButton(
+            "❌ إلغاء",
+            callback_data="cancel",
+            style="danger",
+            icon_custom_emoji_id="5060247798616687432"
+        )
     )
+    return markup
 
-INFO_TXT = (
-    "╔═══════════════════════╗\n"
-    "║  📋  *معلومات البوت*  ║\n"
-    "╚═══════════════════════╝\n\n"
-    "🔍 *ما يفعله البوت:*\n"
-    "┌──────────────────────┐\n"
-    "│ ✅ فحص Luhn لكل بطاقة\n"
-    "│ ✅ حذف البطاقات المنتهية\n"
-    "│ ✅ حذف التكرارات\n"
-    "│ ✅ تحليل BINs تلقائي\n"
-    "│ ✅ تصنيف ذكي للبيانات\n"
-    "│ ✅ ضمان Luhn في التوليد\n"
-    "└──────────────────────┘\n\n"
-    "📌 *الصيغة المدعومة:*\n"
-    "`NUM|MM|YY|CVV`\n\n"
-    f"━━━━━━━━━━━━━━━━━━━━━━━━\n🏷 `{BOT_TAG}` · v{VERSION}"
-)
+def create_date_keyboard() -> InlineKeyboardMarkup:
+    """لوحة اختيار وضع التاريخ"""
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton(
+            "📅 ثابت",
+            callback_data="date_fixed",
+            style="primary"
+        ),
+        InlineKeyboardButton(
+            "🎲 متغير",
+            callback_data="date_random",
+            style="primary"
+        )
+    )
+    markup.add(
+        InlineKeyboardButton(
+            "❌ إلغاء",
+            callback_data="cancel",
+            style="danger",
+            icon_custom_emoji_id="5060247798616687432"
+        )
+    )
+    return markup
 
-HELP_TXT = (
-    "╔═══════════════════════╗\n"
-    "║  💡  *دليل الاستخدام*  ║\n"
-    "╚═══════════════════════╝\n\n"
-    "1️⃣ أرسل ملف `.txt` بالبطاقات\n"
-    "2️⃣ انتظر التحليل الذكي\n"
-    "3️⃣ اختر نوع BINs\n"
-    "4️⃣ اختر عدد الأرقام (6-16)\n"
-    "5️⃣ اختر وضع التاريخ والـ CVV\n"
-    "6️⃣ اختر عدد البطاقات لكل BIN\n"
-    "7️⃣ احصل على ملفك 🎉\n\n"
-    f"━━━━━━━━━━━━━━━━━━━━━━━━\n🏷 `{BOT_TAG}` · v{VERSION}"
-)
+def create_cvv_keyboard() -> InlineKeyboardMarkup:
+    """لوحة اختيار وضع CVV"""
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton(
+            "🔐 ثابت",
+            callback_data="cvv_fixed",
+            style="primary"
+        ),
+        InlineKeyboardButton(
+            "🎲 متغير",
+            callback_data="cvv_random",
+            style="primary"
+        )
+    )
+    markup.add(
+        InlineKeyboardButton(
+            "❌ إلغاء",
+            callback_data="cancel",
+            style="danger",
+            icon_custom_emoji_id="5060247798616687432"
+        )
+    )
+    return markup
+
+def create_count_keyboard() -> InlineKeyboardMarkup:
+    """لوحة اختيار عدد البطاقات"""
+    markup = InlineKeyboardMarkup(row_width=3)
+    buttons = [
+        InlineKeyboardButton("5", callback_data="count_5", style="primary"),
+        InlineKeyboardButton("10 ✅", callback_data="count_10", style="success"),
+        InlineKeyboardButton("20", callback_data="count_20", style="primary"),
+        InlineKeyboardButton("50", callback_data="count_50", style="primary"),
+        InlineKeyboardButton("100", callback_data="count_100", style="primary"),
+        InlineKeyboardButton("200", callback_data="count_200", style="primary"),
+    ]
+    markup.add(*buttons[:3])
+    markup.add(*buttons[3:6])
+    markup.add(
+        InlineKeyboardButton(
+            "❌ إلغاء",
+            callback_data="cancel",
+            style="danger",
+            icon_custom_emoji_id="5060247798616687432"
+        )
+    )
+    return markup
 
 # ══════════════════════════════════════════════════════════════
-# ██  معالجات /start و /reset  ██
+# ██  معالجات الأوامر  ██
 # ══════════════════════════════════════════════════════════════
 
-async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    uid  = update.effective_user.id
-    name = update.effective_user.first_name or "صديقي"
-    st   = load_stats()
-    st["total_users"].add(uid)
-    save_stats(st)
-    ud = load_user(uid)
-    ud.setdefault("name", name)
-    ud.setdefault("joined", datetime.datetime.now().isoformat())
-    save_user(uid, ud)
-    await update.message.reply_text(
-        txt_welcome(name),
+@bot.message_handler(commands=['start'])
+def start_command(message):
+    """معالج أمر /start"""
+    uid = message.from_user.id
+    name = message.from_user.first_name or "صديقي"
+    
+    # تحديث الإحصائيات
+    stats = load_stats()
+    stats["total_users"] += 1
+    save_stats(stats)
+    
+    # حفظ إعدادات المستخدم
+    settings = load_user_settings(uid)
+    settings["name"] = name
+    save_user_settings(uid, settings)
+    
+    # رسالة الترحيب
+    welcome_text = f"""
+╔══════════════════════════╗
+║  🔥  *Card Generator Pro*  ║
+╚══════════════════════════╝
+
+👋 أهلاً بك *{name}*
+
+📤 أرسل ملف `.txt` لبدء التوليد
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+🏷 {BOT_TAG} · v{VERSION}
+"""
+    bot.send_message(
+        message.chat.id,
+        welcome_text,
         parse_mode="Markdown",
-        reply_markup=kb_main(owner=(uid == OWNER_ID)),
+        reply_markup=create_main_menu(uid)
     )
-    return ST_IDLE
 
-async def cmd_reset(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    ctx.user_data.clear()
-    uid = update.effective_user.id
+@bot.message_handler(commands=['reset'])
+def reset_command(message):
+    """معالج أمر /reset"""
+    uid = message.from_user.id
+    user_data.pop(uid, None)
+    user_steps.pop(uid, None)
+    
+    # حذف الملفات المؤقتة
     for f in TEMP_DIR.glob(f"{uid}_*"):
-        f.unlink(missing_ok=True)
-    await update.message.reply_text(
-        "🔄 *تم إعادة التعيين.*\n\nأرسل /start للبدء.",
-        parse_mode="Markdown",
+        try:
+            f.unlink()
+        except:
+            pass
+    
+    bot.reply_to(
+        message,
+        "🔄 *تم إعادة التعيين*\n\nأرسل /start للبدء من جديد",
+        parse_mode="Markdown"
     )
-    return ConversationHandler.END
 
 # ══════════════════════════════════════════════════════════════
-# ██  معالجات الأزرار العامة  ██
+# ██  معالجات الأزرار  ██
 # ══════════════════════════════════════════════════════════════
 
-async def cb_home(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    ctx.user_data.clear()
-    uid  = q.from_user.id
-    name = q.from_user.first_name or "صديقي"
-    await q.message.edit_text(
-        txt_welcome(name),
-        parse_mode="Markdown",
-        reply_markup=kb_main(owner=(uid == OWNER_ID)),
-    )
-    return ST_IDLE
-
-async def cb_upload_hint(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    await q.message.reply_text(
+@bot.callback_query_handler(func=lambda call: call.data == "upload_file")
+def upload_file_callback(call):
+    """معالج زر رفع الملف"""
+    bot.answer_callback_query(call.id)
+    bot.send_message(
+        call.message.chat.id,
         "📤 *أرسل ملف `.txt` الآن*\n\n"
         "┌─────────────────────┐\n"
         "│ الصيغة: `NUM|MM|YY|CVV`\n"
         "│ مثال: `4111111111111111|08|26|123`\n"
         "└─────────────────────┘",
         parse_mode="Markdown",
+        reply_markup=create_back_button()
     )
-    return ST_IDLE
+    user_steps[call.from_user.id] = "waiting_file"
 
-async def cb_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    await q.message.edit_text(INFO_TXT, parse_mode="Markdown", reply_markup=kb_home())
-    return ST_IDLE
+@bot.callback_query_handler(func=lambda call: call.data == "back")
+def back_callback(call):
+    """معالج زر الرجوع"""
+    bot.answer_callback_query(call.id)
+    uid = call.from_user.id
+    name = call.from_user.first_name or "صديقي"
+    user_steps.pop(uid, None)
+    
+    bot.edit_message_text(
+        f"""
+╔══════════════════════════╗
+║  🔥  *Card Generator Pro*  ║
+╚══════════════════════════╝
 
-async def cb_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    await q.message.edit_text(HELP_TXT, parse_mode="Markdown", reply_markup=kb_home())
-    return ST_IDLE
+👋 أهلاً بك *{name}*
 
-async def cb_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer("✅ تم الإلغاء")
-    ctx.user_data.clear()
-    uid = q.from_user.id
-    await q.message.edit_text(
-        "❌ *تم الإلغاء.*\n\nاضغط الرئيسية للبدء من جديد.",
+📤 أرسل ملف `.txt` لبدء التوليد
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+🏷 {BOT_TAG} · v{VERSION}
+""",
+        call.message.chat.id,
+        call.message.message_id,
         parse_mode="Markdown",
-        reply_markup=kb_main(owner=(uid == OWNER_ID)),
+        reply_markup=create_main_menu(uid)
     )
-    return ST_IDLE
 
-# ── Owner ──────────────────────────────────────────────────
+@bot.callback_query_handler(func=lambda call: call.data == "cancel")
+def cancel_callback(call):
+    """معالج زر الإلغاء"""
+    bot.answer_callback_query(call.id, "✅ تم الإلغاء")
+    uid = call.from_user.id
+    name = call.from_user.first_name or "صديقي"
+    user_steps.pop(uid, None)
+    user_data.pop(uid, None)
+    
+    bot.edit_message_text(
+        f"""
+╔══════════════════════════╗
+║  🔥  *Card Generator Pro*  ║
+╚══════════════════════════╝
 
-async def cb_owner_dash(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    if q.from_user.id != OWNER_ID:
-        await q.answer("🚫 غير مصرح", show_alert=True)
-        return ST_IDLE
-    st   = load_stats()
-    db   = load_pbins()
-    pc   = sum(1 for v in db.values() if v.get("classification") == "private")
-    sc   = sum(1 for v in db.values() if v.get("classification") == "semi")
-    pub  = sum(1 for v in db.values() if v.get("classification") == "public")
-    text = (
-        "╔══════════════════════════╗\n"
-        "║  📊  *لوحة التحكم*  ║\n"
-        "╚══════════════════════════╝\n\n"
-        f"👥 المستخدمون: `{len(st['total_users'])}`\n"
-        f"📁 ملفات محللة: `{st['total_files']}`\n"
-        f"🆕 بطاقات مولدة: `{st['total_generated']}`\n\n"
-        "🗄 *قاعدة BINs:*\n"
-        f"├ 🔒 Private: `{pc}`\n"
-        f"├ 📈 Semi: `{sc}`\n"
-        f"└ 🌐 Public: `{pub}`\n"
-        f"   المجموع: `{len(db)}`\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━\n🏷 `{BOT_TAG}` · v{VERSION}"
+👋 أهلاً بك *{name}*
+
+📤 أرسل ملف `.txt` لبدء التوليد
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+🏷 {BOT_TAG} · v{VERSION}
+""",
+        call.message.chat.id,
+        call.message.message_id,
+        parse_mode="Markdown",
+        reply_markup=create_main_menu(uid)
     )
-    await q.message.edit_text(text, parse_mode="Markdown", reply_markup=kb_home())
-    return ST_IDLE
-
-async def cb_owner_clear(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    if q.from_user.id != OWNER_ID:
-        await q.answer("🚫 غير مصرح", show_alert=True)
-        return ST_IDLE
-    save_pbins({})
-    await q.answer("✅ تم تنظيف قاعدة BINs", show_alert=True)
-    return ST_IDLE
-
-async def cb_owner_export(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    if q.from_user.id != OWNER_ID:
-        await q.answer("🚫 غير مصرح", show_alert=True)
-        return ST_IDLE
-    db = load_pbins()
-    lines = [
-        f"{b} | {v.get('classification','?'):8} | "
-        f"{v.get('info',{}).get('scheme',''):8} | "
-        f"{v.get('info',{}).get('country',''):20} | "
-        f"{v.get('info',{}).get('bank','')}"
-        for b, v in db.items()
-    ]
-    content = "\n".join(lines) if lines else "فارغة"
-    path = TEMP_DIR / f"bins_export.txt"
-    path.write_text(content, encoding="utf-8")
-    with open(path, "rb") as f:
-        await q.message.reply_document(
-            InputFile(f, filename="private_bins.txt"),
-            caption=f"📤 *قاعدة BINs* — {len(db)} BIN",
-            parse_mode="Markdown",
-        )
-    path.unlink(missing_ok=True)
-    return ST_IDLE
 
 # ══════════════════════════════════════════════════════════════
-# ██  معالج الملف الرئيسي  ██
+# ██  معالج رفع الملف  ██
 # ══════════════════════════════════════════════════════════════
 
-async def handle_doc(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    doc = update.message.document
-
-    if not doc or not doc.file_name.lower().endswith(".txt"):
-        await update.message.reply_text(
-            "❌ *يرجى إرسال ملف `.txt` فقط.*",
-            parse_mode="Markdown",
+@bot.message_handler(content_types=['document'])
+def handle_document(message):
+    """معالج رفع الملفات"""
+    uid = message.from_user.id
+    
+    if user_steps.get(uid) != "waiting_file":
+        bot.reply_to(
+            message,
+            "❌ يرجى الضغط على زر 📤 رفع ملف أولاً",
+            reply_markup=create_main_menu(uid)
         )
-        return ST_IDLE
-
-    prog = await update.message.reply_text(
-        "╔══════════════════════╗\n"
-        "║  🔄  *جاري التحليل...*  ║\n"
-        "╚══════════════════════╝\n\n"
-        "⏳ قراءة الملف...",
-        parse_mode="Markdown",
-    )
-
-    # تحميل
+        return
+    
+    if not message.document.file_name.endswith('.txt'):
+        bot.reply_to(message, "❌ يرجى إرسال ملف `.txt` فقط")
+        return
+    
+    status_msg = bot.reply_to(message, "🔄 **جاري معالجة الملف...**", parse_mode="Markdown")
+    
     try:
-        tg_file = await doc.get_file()
-        raw     = await tg_file.download_as_bytearray()
-        lines   = raw.decode("utf-8", errors="ignore").splitlines()
+        # تحميل الملف
+        file_info = bot.get_file(message.document.file_id)
+        downloaded = bot.download_file(file_info.file_path)
+        
+        # قراءة المحتوى
+        content = downloaded.decode('utf-8', errors='ignore')
+        lines = content.splitlines()
+        
+        # تصفية البطاقات
+        filtered = filter_cards(lines)
+        valid_cards = filtered["valid"]
+        
+        if not valid_cards:
+            bot.edit_message_text(
+                f"""❌ *لا توجد بطاقات صالحة!*
+
+📊 الإحصائيات:
+├ الأصلي: `{filtered['original']}`
+├ غير صالحة: `{filtered['invalid']}`
+├ منتهية: `{filtered['expired']}`
+├ فشل Luhn: `{filtered['luhn_fail']}`
+└ مكررة: `{filtered['dup_card'] + filtered['dup_bin']}`
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+🏷 {BOT_TAG}""",
+                message.chat.id,
+                status_msg.message_id,
+                parse_mode="Markdown"
+            )
+            return
+        
+        # تحليل BINs (مخفي)
+        bot.edit_message_text(
+            "🔄 **جاري تحليل البطاقات...**\n_(قد يستغرق بضع ثوانٍ)_",
+            message.chat.id,
+            status_msg.message_id,
+            parse_mode="Markdown"
+        )
+        
+        analyzed = analyze_bins(valid_cards)
+        
+        # AI تحليل مخفي (فقط للتسجيل)
+        if ai_client:
+            ai_result = ai_hidden_analysis(analyzed)
+            if ai_result:
+                logger.info(f"AI Analysis for {uid}: {ai_result}")
+        
+        # حفظ البيانات
+        user_data[uid] = {
+            "analyzed": analyzed,
+            "filtered": filtered,
+            "status_msg_id": status_msg.message_id
+        }
+        
+        # تحديث الإحصائيات
+        stats = load_stats()
+        stats["total_files"] += 1
+        save_stats(stats)
+        
+        # عرض ملخص بسيط ثم السؤال الأول
+        bot.edit_message_text(
+            f"""✅ *تم تحليل الملف بنجاح!*
+
+📁 البطاقات الصالحة: `{len(valid_cards)}`
+🗂 عدد BINs الفريدة: `{len(analyzed)}`
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+📏 *كم رقم تريد تاخذ من البطاقة الأصلية؟*
+(الباقي يُولَّد عشوائياً + Luhn مضمون)
+
+✅ الافتراضي الموصى به: `12`""",
+            message.chat.id,
+            status_msg.message_id,
+            parse_mode="Markdown",
+            reply_markup=create_digits_keyboard()
+        )
+        
     except Exception as e:
-        await prog.edit_text(f"❌ فشل التحميل: `{e}`", parse_mode="Markdown")
-        return ST_IDLE
-
-    # تنظيف
-    await prog.edit_text(
-        "╔══════════════════════╗\n"
-        "║  🔄  *جاري التحليل...*  ║\n"
-        "╚══════════════════════╝\n\n"
-        "🧹 فحص Luhn وتنظيف البطاقات...",
-        parse_mode="Markdown",
-    )
-    fr = filter_cards(lines)
-    valid = fr["valid"]
-
-    if not valid:
-        await prog.edit_text(
-            "❌ *لا توجد بطاقات صالحة!*\n\n"
-            f"├ الأصلي: `{fr['original']}`\n"
-            f"├ غير صالحة: `{fr['invalid']}`\n"
-            f"├ منتهية: `{fr['expired']}`\n"
-            f"├ فشل Luhn: `{fr['luhn_fail']}`\n"
-            f"└ مكررة: `{fr['dup_card'] + fr['dup_bin']}`",
-            parse_mode="Markdown",
+        logger.error(f"Error processing file: {e}")
+        bot.edit_message_text(
+            f"❌ *خطأ في معالجة الملف:*\n`{str(e)[:100]}`",
+            message.chat.id,
+            status_msg.message_id,
+            parse_mode="Markdown"
         )
-        return ST_IDLE
-
-    # تحليل BINs
-    await prog.edit_text(
-        "╔══════════════════════╗\n"
-        "║  🔄  *جاري التحليل...*  ║\n"
-        "╚══════════════════════╝\n\n"
-        f"🔍 تحليل {len(valid)} BIN فريد...\n_(ثوانٍ قليلة)_",
-        parse_mode="Markdown",
-    )
-
-    loop     = asyncio.get_event_loop()
-    analyzed = await loop.run_in_executor(None, analyze_bins, valid)
-
-    # AI مخفي في الـ logs
-    ai_note = await loop.run_in_executor(None, ai_hidden_note, analyzed)
-    if ai_note:
-        logger.info(f"[AI/{uid}] {ai_note}")
-
-    pc  = sum(1 for c in analyzed if c["cls"] == "private")
-    sc  = sum(1 for c in analyzed if c["cls"] == "semi")
-    pub = sum(1 for c in analyzed if c["cls"] == "public")
-
-    ctx.user_data["analyzed"] = analyzed
-    ctx.user_data["fr"]       = fr
-
-    st = load_stats()
-    st["total_files"] += 1
-    st["total_users"].add(uid)
-    save_stats(st)
-
-    summary = (
-        "╔══════════════════════════╗\n"
-        "║  ✅  *نتائج التحليل*  ║\n"
-        "╚══════════════════════════╝\n\n"
-        "📁 *إحصائيات الملف:*\n"
-        f"┌ الأصلي: `{fr['original']}`\n"
-        f"├ ❌ غير صالحة: `{fr['invalid']}`\n"
-        f"├ ⏰ منتهية: `{fr['expired']}`\n"
-        f"├ 🔢 فشل Luhn: `{fr['luhn_fail']}`\n"
-        f"├ 🔁 مكررة: `{fr['dup_card'] + fr['dup_bin']}`\n"
-        f"└ ✅ صالحة للتوليد: `{len(valid)}`\n\n"
-        "🗂 *تصنيف BINs:*\n"
-        f"├ 🔒 Private (نادر): `{pc}`\n"
-        f"├ 📈 Semi-Public: `{sc}`\n"
-        f"└ 🌐 Public (شائع): `{pub}`\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "👇 *اختر نوع BINs للتوليد:*"
-    )
-    await prog.edit_text(
-        summary,
-        parse_mode="Markdown",
-        reply_markup=kb_bin_type(pc, sc, pub),
-    )
-    return ST_BIN_TYPE
 
 # ══════════════════════════════════════════════════════════════
-# ██  خطوات الإعداد  ██
+# ██  معالجات اختيارات المستخدم  ██
 # ══════════════════════════════════════════════════════════════
 
-async def cb_bin_type(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q     = update.callback_query
-    await q.answer()
-    btype = q.data.replace("bt_", "")
-    analyzed = ctx.user_data.get("analyzed", [])
+@bot.callback_query_handler(func=lambda call: call.data.startswith("digits_"))
+def digits_callback(call):
+    """معالج اختيار عدد الأرقام"""
+    uid = call.from_user.id
+    digits = int(call.data.split("_")[1])
+    
+    if uid not in user_data:
+        bot.answer_callback_query(call.id, "❌ انتهت الجلسة. أعد رفع الملف")
+        return
+    
+    user_data[uid]["digits"] = digits
+    
+    bot.edit_message_text(
+        "📅 *اختر وضع التاريخ:*",
+        call.message.chat.id,
+        call.message.message_id,
+        parse_mode="Markdown",
+        reply_markup=create_date_keyboard()
+    )
+    bot.answer_callback_query(call.id)
 
-    if btype == "private":
-        chosen = [c for c in analyzed if c["cls"] == "private"]
-    elif btype == "semi":
-        chosen = [c for c in analyzed if c["cls"] in ("private", "semi")]
-    else:
-        chosen = analyzed
+@bot.callback_query_handler(func=lambda call: call.data.startswith("date_"))
+def date_callback(call):
+    """معالج اختيار وضع التاريخ"""
+    uid = call.from_user.id
+    date_mode = call.data.split("_")[1]
+    
+    if uid not in user_data:
+        bot.answer_callback_query(call.id, "❌ انتهت الجلسة. أعد رفع الملف")
+        return
+    
+    user_data[uid]["date_mode"] = date_mode
+    
+    bot.edit_message_text(
+        "🔐 *اختر وضع CVV:*",
+        call.message.chat.id,
+        call.message.message_id,
+        parse_mode="Markdown",
+        reply_markup=create_cvv_keyboard()
+    )
+    bot.answer_callback_query(call.id)
 
-    if not chosen:
-        await q.message.edit_text(
-            "⚠️ *لا توجد BINs في هذا التصنيف.*\nجرب خياراً آخر.",
+@bot.callback_query_handler(func=lambda call: call.data.startswith("cvv_"))
+def cvv_callback(call):
+    """معالج اختيار وضع CVV"""
+    uid = call.from_user.id
+    cvv_mode = call.data.split("_")[1]
+    
+    if uid not in user_data:
+        bot.answer_callback_query(call.id, "❌ انتهت الجلسة. أعد رفع الملف")
+        return
+    
+    user_data[uid]["cvv_mode"] = cvv_mode
+    
+    bot.edit_message_text(
+        "🔢 *كم بطاقة تريد توليدها من كل BIN؟*",
+        call.message.chat.id,
+        call.message.message_id,
+        parse_mode="Markdown",
+        reply_markup=create_count_keyboard()
+    )
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("count_"))
+def count_callback(call):
+    """معالج اختيار عدد البطاقات والتوليد النهائي"""
+    uid = call.from_user.id
+    count = int(call.data.split("_")[1])
+    
+    if uid not in user_data:
+        bot.answer_callback_query(call.id, "❌ انتهت الجلسة. أعد رفع الملف")
+        return
+    
+    data = user_data[uid]
+    digits = data.get("digits", 12)
+    date_mode = data.get("date_mode", "fixed")
+    cvv_mode = data.get("cvv_mode", "random")
+    analyzed = data.get("analyzed", [])
+    
+    if not analyzed:
+        bot.answer_callback_query(call.id, "❌ لا توجد بطاقات صالحة")
+        return
+    
+    bot.edit_message_text(
+        "⚙️ **جاري توليد البطاقات...**\n_(قد يستغرق بضع ثوانٍ)_",
+        call.message.chat.id,
+        call.message.message_id,
+        parse_mode="Markdown"
+    )
+    
+    # توليد البطاقات في خيط منفصل
+    def generate_and_send():
+        all_cards = []
+        seen = set()
+        
+        for card in analyzed:
+            generated = generate_cards(card, digits, date_mode, cvv_mode, count)
+            for card_line in generated:
+                if card_line not in seen:
+                    seen.add(card_line)
+                    all_cards.append(card_line)
+        
+        if not all_cards:
+            bot.send_message(
+                call.message.chat.id,
+                "❌ *فشل التوليد.* حاول مجدداً.",
+                parse_mode="Markdown",
+                reply_markup=create_main_menu(uid)
+            )
+            return
+        
+        # حفظ الملف
+        output_file = TEMP_DIR / f"{uid}_output.txt"
+        output_file.write_text("\n".join(all_cards), encoding="utf-8")
+        
+        # تحديث الإحصائيات
+        stats = load_stats()
+        stats["total_generated"] += len(all_cards)
+        save_stats(stats)
+        
+        # إرسال الملف
+        caption = f"""╔══════════════════════════╗
+║  🎉  *تم التوليد بنجاح!*  ║
+╚══════════════════════════╝
+
+├ 🆕 البطاقات المولدة: `{len(all_cards)}`
+├ 🗂 عدد BINs المستخدمة: `{len(analyzed)}`
+├ 📏 طول الرقم: `{digits}`
+├ 📅 التاريخ: `{'ثابت' if date_mode == 'fixed' else 'عشوائي'}`
+├ 🔐 CVV: `{'ثابت' if cvv_mode == 'fixed' else 'عشوائي'}`
+└ ✅ Luhn: `مضمون 100%`
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+🏷 {BOT_TAG} · v{VERSION}"""
+
+        with open(output_file, 'rb') as f:
+            bot.send_document(
+                call.message.chat.id,
+                f,
+                caption=caption,
+                parse_mode="Markdown"
+            )
+        
+        # حذف الملف المؤقت
+        try:
+            output_file.unlink()
+        except:
+            pass
+        
+        # حذف بيانات الجلسة
+        user_data.pop(uid, None)
+        
+        # إرسال زر الرجوع للقائمة
+        bot.send_message(
+            call.message.chat.id,
+            "✅ *اكتمل التوليد!*\n\nاضغط /start للبدء من جديد",
             parse_mode="Markdown",
-            reply_markup=kb_home(),
+            reply_markup=create_main_menu(uid)
         )
-        return ST_BIN_TYPE
-
-    ctx.user_data["chosen"] = chosen
-
-    await q.message.edit_text(
-        "╔══════════════════════════╗\n"
-        "║  📏  *عدد الأرقام*  ║\n"
-        "╚══════════════════════════╝\n\n"
-        "كم رقماً تأخذ من البطاقة الأصلية؟\n"
-        "_(الباقي يُولَّد عشوائياً + Luhn مضمون)_\n\n"
-        "✅ الافتراضي الموصى به: `12`",
-        parse_mode="Markdown",
-        reply_markup=kb_digits(),
-    )
-    return ST_DIGITS
-
-async def cb_digits(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    ctx.user_data["digits"] = int(q.data.replace("dg_", ""))
-    await q.message.edit_text(
-        "╔══════════════════════════╗\n"
-        "║  📅  *وضع التاريخ*  ║\n"
-        "╚══════════════════════════╝\n\n"
-        "اختر وضع تاريخ انتهاء البطاقة:",
-        parse_mode="Markdown",
-        reply_markup=kb_date(),
-    )
-    return ST_DATE_MODE
-
-async def cb_date_mode(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    ctx.user_data["date_mode"] = q.data.replace("dt_", "")
-    await q.message.edit_text(
-        "╔══════════════════════════╗\n"
-        "║  🔐  *وضع CVV*  ║\n"
-        "╚══════════════════════════╝\n\n"
-        "اختر وضع رمز CVV:",
-        parse_mode="Markdown",
-        reply_markup=kb_cvv(),
-    )
-    return ST_CVV_MODE
-
-async def cb_cvv_mode(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    ctx.user_data["cvv_mode"] = q.data.replace("cv_", "")
-    await q.message.edit_text(
-        "╔══════════════════════════╗\n"
-        "║  🔢  *عدد البطاقات*  ║\n"
-        "╚══════════════════════════╝\n\n"
-        "كم بطاقة تريد توليدها من *كل BIN*؟",
-        parse_mode="Markdown",
-        reply_markup=kb_count(),
-    )
-    return ST_COUNT
+    
+    threading.Thread(target=generate_and_send).start()
+    bot.answer_callback_query(call.id)
 
 # ══════════════════════════════════════════════════════════════
-# ██  التوليد النهائي  ██
+# ██  أوامر المالك (Admin)  ██
 # ══════════════════════════════════════════════════════════════
 
-async def cb_count(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q   = update.callback_query
-    await q.answer()
-    uid = q.from_user.id
+@bot.message_handler(commands=['admin'])
+def admin_command(message):
+    """لوحة تحكم المالك (تظهر فقط للمالك)"""
+    if message.from_user.id != OWNER_ID:
+        bot.reply_to(message, "⛔ هذا الأمر للمالك فقط")
+        return
+    
+    stats = load_stats()
+    bins = load_private_bins()
+    
+    pc = sum(1 for v in bins.values() if v.get("classification") == "private")
+    sc = sum(1 for v in bins.values() if v.get("classification") == "semi")
+    pub = sum(1 for v in bins.values() if v.get("classification") == "public")
+    
+    text = f"""
+╔══════════════════════════╗
+║  📊  *لوحة التحكم*  ║
+╚══════════════════════════╝
 
-    cpb       = int(q.data.replace("cn_", ""))
-    chosen    = ctx.user_data.get("chosen", [])
-    digits    = ctx.user_data.get("digits", 12)
-    date_mode = ctx.user_data.get("date_mode", "fixed")
-    cvv_mode  = ctx.user_data.get("cvv_mode", "random")
+👥 المستخدمون: `{stats.get('total_users', 0)}`
+📁 ملفات محللة: `{stats.get('total_files', 0)}`
+🆕 بطاقات مولدة: `{stats.get('total_generated', 0)}`
 
-    gen_msg = await q.message.reply_text(
-        "╔══════════════════════════╗\n"
-        "║  ⚙️  *جاري التوليد...*  ║\n"
-        "╚══════════════════════════╝\n\n"
-        f"🗂 BINs: `{len(chosen)}`\n"
-        f"📦 لكل BIN: `{cpb}`\n"
-        f"📊 متوقع: `{len(chosen) * cpb}` بطاقة\n\n"
-        "⏳ يرجى الانتظار...",
-        parse_mode="Markdown",
-    )
+🗄 *قاعدة BINs الخاصة:*
+├ 🔒 Private: `{pc}`
+├ 📈 Semi: `{sc}`
+└ 🌐 Public: `{pub}`
+   المجموع: `{len(bins)}`
 
-    all_out: list[str] = []
-    seen_fp: set       = set()
+━━━━━━━━━━━━━━━━━━━━━━━━
+🏷 {BOT_TAG} · v{VERSION}
+"""
+    bot.reply_to(message, text, parse_mode="Markdown")
 
-    for card in chosen:
-        for fp in gen_cards(card, digits, date_mode, cvv_mode, cpb):
-            if fp not in seen_fp:
-                seen_fp.add(fp)
-                all_out.append(fp)
-
-    if not all_out:
-        await gen_msg.edit_text(
-            "❌ *فشل التوليد.* حاول مجدداً.",
-            parse_mode="Markdown",
-            reply_markup=kb_home(),
+@bot.message_handler(commands=['exportbins'])
+def export_bins_command(message):
+    """تصدير قاعدة BINs الخاصة (للمالك فقط)"""
+    if message.from_user.id != OWNER_ID:
+        bot.reply_to(message, "⛔ هذا الأمر للمالك فقط")
+        return
+    
+    bins = load_private_bins()
+    if not bins:
+        bot.reply_to(message, "❌ لا توجد BINs خاصة")
+        return
+    
+    lines = [f"{b} | {v.get('classification', '?')} | {v.get('info', {}).get('scheme', '')}" 
+             for b, v in bins.items()]
+    content = "\n".join(lines)
+    
+    export_file = TEMP_DIR / f"bins_export_{int(time.time())}.txt"
+    export_file.write_text(content, encoding="utf-8")
+    
+    with open(export_file, 'rb') as f:
+        bot.send_document(
+            message.chat.id,
+            f,
+            caption=f"📤 *قاعدة BINs الخاصة*\n📊 العدد: {len(bins)}",
+            parse_mode="Markdown"
         )
-        return ST_IDLE
-
-    # حفظ الملف
-    out = TEMP_DIR / f"{uid}_output.txt"
-    out.write_text("\n".join(all_out), encoding="utf-8")
-
-    # إحصائيات
-    st = load_stats()
-    st["total_generated"] += len(all_out)
-    st["sessions"].append({
-        "uid": uid,
-        "time": datetime.datetime.now().isoformat(),
-        "generated": len(all_out),
-        "bins": len(chosen),
-    })
-    if len(st["sessions"]) > 500:
-        st["sessions"] = st["sessions"][-500:]
-    save_stats(st)
-
-    ud = load_user(uid)
-    ud["last_gen"] = {
-        "time": datetime.datetime.now().isoformat(),
-        "cards": len(all_out), "bins": len(chosen),
-        "digits": digits, "date_mode": date_mode, "cvv_mode": cvv_mode,
-    }
-    save_user(uid, ud)
-
-    # إرسال
-    caption = (
-        "╔══════════════════════════╗\n"
-        "║  🎉  *تم التوليد بنجاح!*  ║\n"
-        "╚══════════════════════════╝\n\n"
-        f"├ 🆕 البطاقات المولدة: `{len(all_out)}`\n"
-        f"├ 🗂 عدد BINs: `{len(chosen)}`\n"
-        f"├ 📏 أرقام محفوظة: `{digits}`\n"
-        f"├ 📅 التاريخ: `{'ثابت' if date_mode=='fixed' else 'عشوائي'}`\n"
-        f"├ 🔐 CVV: `{'ثابت' if cvv_mode=='fixed' else 'عشوائي'}`\n"
-        f"└ ✅ Luhn: `مضمون 100%`\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━\n🏷 `{BOT_TAG}` · v{VERSION}"
-    )
-
-    with open(out, "rb") as f:
-        await q.message.reply_document(
-            InputFile(f, filename=f"cards_{len(all_out)}.txt"),
-            caption=caption,
-            parse_mode="Markdown",
-        )
-    out.unlink(missing_ok=True)
-
-    await gen_msg.edit_text(
-        f"✅ *تم توليد `{len(all_out)}` بطاقة بنجاح!*",
-        parse_mode="Markdown",
-        reply_markup=kb_main(owner=(uid == OWNER_ID)),
-    )
-    ctx.user_data.clear()
-    return ST_IDLE
-
-# ══════════════════════════════════════════════════════════════
-# ██  ConversationHandler + main  ██
-# ══════════════════════════════════════════════════════════════
-
-def build_app() -> Application:
+    
     try:
-        import httpx as _hx, time as _t
-        _hx.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook",
-            json={"drop_pending_updates": True}, timeout=10,
-        )
-        _t.sleep(1)
-        logger.info("Webhook cleared.")
-    except Exception as e:
-        logger.warning(f"deleteWebhook: {e}")
+        export_file.unlink()
+    except:
+        pass
 
-    app = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .read_timeout(40).write_timeout(40).connect_timeout(40)
-        .build()
-    )
+@bot.message_handler(commands=['clearbins'])
+def clearbins_command(message):
+    """مسح قاعدة BINs الخاصة (للمالك فقط)"""
+    if message.from_user.id != OWNER_ID:
+        bot.reply_to(message, "⛔ هذا الأمر للمالك فقط")
+        return
+    
+    save_private_bins({})
+    bot.reply_to(message, "✅ تم مسح قاعدة BINs الخاصة")
 
-    # ─── ConversationHandler موحّد ────────────────────────────
-    conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("start",  cmd_start),
-            MessageHandler(filters.Document.ALL, handle_doc),
-        ],
-        states={
-            ST_IDLE: [
-                MessageHandler(filters.Document.ALL,             handle_doc),
-                CallbackQueryHandler(cb_upload_hint,  pattern="^upload_hint$"),
-                CallbackQueryHandler(cb_info,         pattern="^cb_info$"),
-                CallbackQueryHandler(cb_help,         pattern="^cb_help$"),
-                CallbackQueryHandler(cb_home,         pattern="^home$"),
-                CallbackQueryHandler(cb_cancel,       pattern="^cancel$"),
-                CallbackQueryHandler(cb_owner_dash,   pattern="^owner_dash$"),
-                CallbackQueryHandler(cb_owner_clear,  pattern="^owner_clear$"),
-                CallbackQueryHandler(cb_owner_export, pattern="^owner_export$"),
-            ],
-            ST_BIN_TYPE: [
-                CallbackQueryHandler(cb_bin_type, pattern="^bt_"),
-                CallbackQueryHandler(cb_cancel,   pattern="^cancel$"),
-                CallbackQueryHandler(cb_home,     pattern="^home$"),
-            ],
-            ST_DIGITS: [
-                CallbackQueryHandler(cb_digits,  pattern="^dg_"),
-                CallbackQueryHandler(cb_cancel,  pattern="^cancel$"),
-                CallbackQueryHandler(cb_home,    pattern="^home$"),
-            ],
-            ST_DATE_MODE: [
-                CallbackQueryHandler(cb_date_mode, pattern="^dt_"),
-                CallbackQueryHandler(cb_cancel,    pattern="^cancel$"),
-                CallbackQueryHandler(cb_home,      pattern="^home$"),
-            ],
-            ST_CVV_MODE: [
-                CallbackQueryHandler(cb_cvv_mode, pattern="^cv_"),
-                CallbackQueryHandler(cb_cancel,   pattern="^cancel$"),
-                CallbackQueryHandler(cb_home,     pattern="^home$"),
-            ],
-            ST_COUNT: [
-                CallbackQueryHandler(cb_count,  pattern="^cn_"),
-                CallbackQueryHandler(cb_cancel, pattern="^cancel$"),
-                CallbackQueryHandler(cb_home,   pattern="^home$"),
-            ],
-        },
-        fallbacks=[
-            CommandHandler("start", cmd_start),
-            CommandHandler("reset", cmd_reset),
-            CallbackQueryHandler(cb_home, pattern="^home$"),
-        ],
-        per_message=False,
-        allow_reentry=True,
-    )
-
-    app.add_handler(conv,                               group=0)
-    app.add_handler(CommandHandler("reset", cmd_reset), group=1)
-    return app
-
-def main():
-    logger.info("═" * 55)
-    logger.info(f"  🔥  Card Generator Pro v{VERSION} — {BOT_TAG}")
-    logger.info("═" * 55)
-    app = build_app()
-    app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+# ══════════════════════════════════════════════════════════════
+# ██  تشغيل البوت  ██
+# ══════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    main()
+    print("""
+╔══════════════════════════════════════════════════════════════╗
+║                                                              ║
+║              🔥 Card Generator Pro — by @o8380              ║
+║                                                              ║
+║              Version: 4.0 Pro | telebot                     ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+    """)
+    print(f"✅ Bot Token: {BOT_TOKEN[:10]}...")
+    print(f"✅ Owner ID: {OWNER_ID}")
+    print(f"✅ OpenAI: {'Enabled' if ai_client else 'Disabled'}")
+    print(f"✅ Data Directory: {DATA_DIR}")
+    print("\n🚀 Bot is running...\n")
+    
+    while True:
+        try:
+            bot.infinity_polling(timeout=30, skip_pending=True)
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            time.sleep(5)
