@@ -523,6 +523,7 @@ def start_command(message):
     """معالج أمر /start مع فيديو ترحيبي"""
     uid = message.from_user.id
     name = message.from_user.first_name or "صديقي"
+    username = message.from_user.username or name
     
     # تحديث الإحصائيات
     stats = load_stats()
@@ -534,36 +535,38 @@ def start_command(message):
     settings["name"] = name
     save_user_settings(uid, settings)
     
-    # نص الفيديو (مزخرف بالعربي مثل الصورة)
-    video_caption = """<blockquote><b><i><a href="t.me/o8380">✦</a> "CC Checker Status: <a href="https://t.me/MustafaChkBot?start=_tgr_pB0JUR8xNDY0">ACTIVE VIP ✓</a>  <a href="t.me/o8380">✦</a>
-━━━━━━━━━━━━━━━━
-<tg-emoji emoji-id="5989984458718056172">📌</tg-emoji> CC Checker Professional with Live Results <tg-emoji emoji-id="5388632425314140043">🔈</tg-emoji>
+    # نص الفيديو المزخرف (بدون كليشهات)
+    video_caption = f"""
+🌟 *GEN PRO* 🌟
+━━━━━━━━━━━━━━━━━━━
+✨ *Welcome / أهلاً بك* ✨
+└─ @{username}
 
-<tg-emoji emoji-id="5771868281212245617">📢</tg-emoji> Join <a href="t.me/Mustafa964iq">- Mustafa Channel</a> for Free Keys & Updates
+📤 *Send .txt file to start*
+📌 *الصيغة: `NUM|MM|YY|CVV`*
 
-- Bot By :> <a href="t.me/o8380">- ✦ Mustafa 964 ✦</a>
-- How To Use The Bot :> <a href="t.me/Mustafa964iq/2">-✦ Click Here For Tutorial ✦</a>
- 𝐕𝐞𝐫𝐬𝐢𝐨𝐧 -> 𝟕.𝟎</i></b></blockquote>"""
+━━━━━━━━━━━━━━━━━━━
+⚡ *{BOT_TAG} · v{VERSION}*
+"""
     
-    # إرسال فيديو ترحيبي مع الأزرار
+    # ✅ فيديو ترحيبي مع النص الجديد
     try:
         bot.send_video(
             message.chat.id,
-            video="https://t.me/Mustafa964iq/3",  # نفس الفيديو اللي عندك
+            video="https://t.me/Mustafa964iq/3",
             caption=video_caption,
-            parse_mode="HTML",
+            parse_mode="Markdown",
             reply_markup=create_main_menu(uid)
         )
     except Exception as e:
-        # لو فشل الفيديو، نرسل رسالة عادية بديلة
+        # لو فشل الفيديو، يرسل نص بديل
         bot.send_message(
             message.chat.id,
             f"👋 أهلاً بك *{name}*\n📤 أرسل ملف `.txt` لبدء التوليد",
             parse_mode="Markdown",
             reply_markup=create_main_menu(uid)
         )
-        logger.error(f"Video send failed: {e}")# ══════════════════════════════════════════════════════════════
-# ██  معالجات الأزرار  ██
+        logger.error(f"Video send failed: {e}")# ██  معالجات الأزرار  ██
 # ══════════════════════════════════════════════════════════════
 
 @bot.callback_query_handler(func=lambda call: call.data == "upload_file")
