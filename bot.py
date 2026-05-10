@@ -591,52 +591,59 @@ def back_callback(call):
     user_steps.pop(uid, None)
     
     bot.edit_message_text(
-        f"""
-╔══════════════════════════╗
-║  🔥  *Card Generator Pro*  ║
-╚══════════════════════════╝
-
-👋 أهلاً بك *{name}*
-
-📤 أرسل ملف `.txt` لبدء التوليد
-
-━━━━━━━━━━━━━━━━━━━━━━━━
-🏷 {BOT_TAG} · v{VERSION}
-""",
-        call.message.chat.id,
-        call.message.message_id,
-        parse_mode="Markdown",
-        reply_markup=create_main_menu(uid)
-    )
-
-@bot.callback_query_handler(func=lambda call: call.data == "cancel")
-def cancel_callback(call):
-    """معالج زر الإلغاء"""
-    bot.answer_callback_query(call.id, "✅ تم الإلغاء")
-    uid = call.from_user.id
-    name = call.from_user.first_name or "صديقي"
-    user_steps.pop(uid, None)
-    user_data.pop(uid, None)
+@bot.message_handler(commands=['start'])
+def start_command(message):
+    """معالج أمر /start مع فيديو ترحيبي"""
+    uid = message.from_user.id
+    name = message.from_user.first_name or "صديقي"
     
-    bot.edit_message_text(
-        f"""
-╔══════════════════════════╗
-║  🔥  *Card Generator Pro*  ║
-╚══════════════════════════╝
+    # تحديث الإحصائيات
+    stats = load_stats()
+    stats["total_users"] += 1
+    save_stats(stats)
+    
+    # حفظ إعدادات المستخدم
+    settings = load_user_settings(uid)
+    settings["name"] = name
+    save_user_settings(uid, settings)
+    
+    # نص الفيديو المزخرف (عربي/إنجليزي)
+    video_caption = f"""
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃        🔥 *GEN PRO* 🔥          ┃
+┃    {BOT_TAG} · v{VERSION}       ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
-👋 أهلاً بك *{name}*
+✨ *Welcome / أهلاً بك* ✨
+└── @{message.from_user.username or name}
 
-📤 أرسل ملف `.txt` لبدء التوليد
+┌────────────────────────────────┐
+│  📤 *أرسل ملف `.txt` لبدء العمل* │
+│  📌 الصيغة: `NUM|MM|YY|CVV`     │
+└────────────────────────────────┘
 
-━━━━━━━━━━━━━━━━━━━━━━━━
-🏷 {BOT_TAG} · v{VERSION}
-""",
-        call.message.chat.id,
-        call.message.message_id,
-        parse_mode="Markdown",
-        reply_markup=create_main_menu(uid)
-    )
-
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚡ *Powered by @o8380* ⚡
+"""
+    
+    # إرسال فيديو ترحيبي
+    try:
+        bot.send_video(
+            message.chat.id,
+            video="https://t.me/Mustafa964iq/3",  # رابط الفيديو
+            caption=video_caption,
+            parse_mode="Markdown",
+            reply_markup=create_main_menu(uid)
+        )
+    except Exception as e:
+        # بديل نصي إذا فشل الفيديو
+        bot.send_message(
+            message.chat.id,
+            f"👋 أهلاً بك *{name}*\n📤 أرسل ملف `.txt` لبدء التوليد",
+            parse_mode="Markdown",
+            reply_markup=create_main_menu(uid)
+        )
+        logger.error(f"Video send failed: {e}")
 # ══════════════════════════════════════════════════════════════
 # ██  معالج رفع الملف  ██
 # ══════════════════════════════════════════════════════════════
